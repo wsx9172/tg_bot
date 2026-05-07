@@ -31,7 +31,7 @@ from monitor import get_system_status, check_alerts
 from executor import run_command
 from llm import ask_llm
 
-from menu import main_menu, status_menu, cmd_menu, ai_menu
+from menu import main_menu, status_menu, cmd_menu, ai_menu, msg_menu
 from identity import get_or_create_user, get_or_create_channel
 
 from concurrent.futures import ThreadPoolExecutor
