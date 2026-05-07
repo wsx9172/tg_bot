@@ -1,0 +1,299 @@
+import asyncio
+import logging
+import sys
+from functools import partial
+
+from telegram import Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes
+)
+
+from config import (
+    BOT_TOKEN,
+    ALLOWED_USERS,
+    OPENAI_API_KEY,
+    OPENAI_API_URL,
+    OPENAI_MODEL,
+)
+from monitor import get_system_status, check_alerts
+from executor import run_command
+from llm import ask_llm
+
+from menu import main_menu, status_menu, cmd_menu, ai_menu
+from identity import get_or_create_user, get_or_create_channel
+
+from concurrent.futures import ThreadPoolExecutor
+
+executor = ThreadPoolExecutor(max_workers=2)
+
+logger = logging.getLogger(__name__)
+
+PLATFORM = "telegram"
+BOT_ID = 1
+
+MAX_MESSAGE_LENGTH = 4096
+
+
+# =========================
+# 权限
+# =========================
+
+def auth(update: Update) -> bool:
+    try:
+        user = update.effective_user
+        if user is None:
+            return False
+        return user.id in ALLOWED_USERS
+    except (AttributeError, TypeError):
+        return False
+
+
+async def reply_long_text(message, text: str):
+    if not text:
+        await message.reply_text("")
+        return
+    for i in range(0, len(text), MAX_MESSAGE_LENGTH):
+        await message.reply_text(text[i : i + MAX_MESSAGE_LENGTH])
+
+
+# =========================
+# start（首次进入）
+# =========================
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not auth(update):
+        return
+
+    get_or_create_user(
+        PLATFORM,
+        update.effective_user.id,
+        update.effective_user.username
+    )
+
+    get_or_create_channel(
+        PLATFORM,
+        update.effective_chat.id
+    )
+
+    await update.message.reply_text(
+        "🤖 Linux 运维控制台\n请选择功能：",
+        reply_markup=main_menu()
+    )
+
+
+# =========================
+# callback router（统一入口）
+# =========================
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+
+    if not query:
+        return
+
+    try:
+        await query.answer()
+    except Exception:
+        logger.warning("callback answer failed", exc_info=True)
+        return
+
+    if not auth(update):
+        return
+
+    data = query.data
+
+    try:
+        # =========================
+        # 返回主菜单
+        # =========================
+        if data == "menu:back":
+            await query.message.edit_text(
+                "🤖 Linux 运维控制台\n请选择功能：",
+                reply_markup=main_menu()
+            )
+
+        # =========================
+        # 系统状态
+        # =========================
+        elif data == "menu:status":
+            loop = asyncio.get_event_loop()
+            cpu, mem, disk = await loop.run_in_executor(
+                executor, get_system_status
+            )
+
+            await query.message.edit_text(
+                f"📊 系统状态\n\nCPU: {cpu}%\nMEM: {mem}%\nDISK: {disk}%",
+                reply_markup=status_menu()
+            )
+
+        # =========================
+        # 命令页面
+        # =========================
+        elif data == "menu:cmd":
+            await query.message.edit_text(
+                "⚙️ 命令执行模块\n\n"
+                "使用方式：\n/cmd uptime\n/cmd disk\n/cmd mem",
+                reply_markup=cmd_menu()
+            )
+
+        # =========================
+        # AI页面
+        # =========================
+        elif data == "menu:ai":
+            await query.message.edit_text(
+                "🧠 AI助手模块\n\n使用方式：\n/ai 你的问题",
+                reply_markup=ai_menu()
+            )
+
+        # =========================
+        # 命令说明
+        # =========================
+        elif data == "menu:cmd_help":
+            await query.message.reply_text(
+                "可用命令：\n"
+                "- uptime\n- disk\n- mem\n- docker"
+            )
+
+        # =========================
+        # AI说明
+        # =========================
+        elif data == "menu:ai_help":
+            await query.message.reply_text(
+                "AI功能说明：\n输入 /ai + 问题 即可调用大模型"
+            )
+
+    except Exception:
+        logger.exception("callback handler error")
+
+
+# =========================
+# 命令接口
+# =========================
+
+async def cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not auth(update):
+        return
+
+    if not context.args:
+        await update.message.reply_text("用法：/cmd uptime")
+        return
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        executor,
+        partial(
+            run_command,
+            update.effective_user.id,
+            update.effective_chat.id,
+            BOT_ID,
+            1,
+            context.args[0],
+        ),
+    )
+
+    await reply_long_text(update.message, result)
+
+
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not auth(update):
+        return
+
+    loop = asyncio.get_event_loop()
+    cpu, mem, disk = await loop.run_in_executor(executor, get_system_status)
+    await update.message.reply_text(f"{cpu} {mem} {disk}")
+
+
+async def ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not auth(update):
+        return
+
+    prompt = " ".join(context.args)
+
+    if not prompt:
+        await update.message.reply_text("用法：/ai 问题")
+        return
+
+    result = ask_llm(
+        update.effective_user.id,
+        update.effective_chat.id,
+        None,
+        {
+            "api_key": OPENAI_API_KEY,
+            "api_url": OPENAI_API_URL,
+            "model": OPENAI_MODEL,
+        },
+        prompt,
+    )
+
+    await reply_long_text(update.message, result)
+
+
+# =========================
+# 告警
+# =========================
+async def alert_loop(app):
+    loop = asyncio.get_event_loop()
+    while True:
+        try:
+            # ✅ 在线程池中执行CPU密集操作
+            alerts = await loop.run_in_executor(executor, check_alerts)
+            if alerts:
+                tasks = [
+                    app.bot.send_message(uid, "\n".join(alerts))
+                    for uid in ALLOWED_USERS
+                ]
+                await asyncio.gather(*tasks)
+        except Exception:
+            logger.exception("alert loop error")
+        
+        await asyncio.sleep(60)
+
+async def post_init(app):
+    asyncio.create_task(alert_loop(app))
+
+
+# =========================
+# main
+# =========================
+
+def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+
+    logger.info("Bot starting")
+
+    if not BOT_TOKEN:
+        print("❌ BOT_TOKEN missing")
+        sys.exit(1)
+
+    try:
+        app = (
+            Application.builder()
+            .token(BOT_TOKEN)
+            .post_init(post_init)
+            .build()
+        )
+
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CommandHandler("cmd", cmd))
+        app.add_handler(CommandHandler("status", status))
+        app.add_handler(CommandHandler("ai", ai))
+
+        app.add_handler(CallbackQueryHandler(button_handler))
+
+        logger.info("Bot initialized; polling started")
+
+        app.run_polling()
+
+    except Exception:
+        logger.exception("fatal error starting bot")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
