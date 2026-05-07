@@ -11,7 +11,7 @@ def get_or_create_user(platform, external_user_id, name=None):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id FROM user
+                SELECT id FROM `user`
                 WHERE platform=%s AND external_user_id=%s
             """, (platform, str(external_user_id)))
 
@@ -21,7 +21,7 @@ def get_or_create_user(platform, external_user_id, name=None):
                 return row[0]
 
             cur.execute("""
-                INSERT INTO user(platform, external_user_id, name)
+                INSERT INTO `user`(platform, external_user_id, name)
                 VALUES (%s,%s,%s)
             """, (platform, str(external_user_id), name))
 
@@ -42,7 +42,7 @@ def get_or_create_channel(platform, external_id, name=None):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id FROM channel
+                SELECT id FROM `channel`
                 WHERE platform=%s AND external_id=%s
             """, (platform, str(external_id)))
 
@@ -52,7 +52,7 @@ def get_or_create_channel(platform, external_id, name=None):
                 return row[0]
 
             cur.execute("""
-                INSERT INTO channel(platform, external_id, name)
+                INSERT INTO `channel`(platform, external_id, name)
                 VALUES (%s,%s,%s)
             """, (platform, str(external_id), name))
 

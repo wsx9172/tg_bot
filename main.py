@@ -3,6 +3,7 @@ import logging
 import sys
 from functools import partial
 
+import pymysql
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -17,7 +18,12 @@ from config import (
     OPENAI_API_KEY,
     OPENAI_API_URL,
     OPENAI_MODEL,
+    BOT_INSTANCE_ID,
+    CHAT_PLATFORM,
+    DEFAULT_LLM_PROVIDER_ID,
+    NODE_ID,
 )
+from db import bot_instance_exists, mark_chat_first_seen
 from monitor import get_system_status, check_alerts
 from executor import run_command
 from llm import ask_llm
@@ -30,9 +36,6 @@ from concurrent.futures import ThreadPoolExecutor
 executor = ThreadPoolExecutor(max_workers=2)
 
 logger = logging.getLogger(__name__)
-
-PLATFORM = "telegram"
-BOT_ID = 1
 
 MAX_MESSAGE_LENGTH = 4096
 
@@ -68,14 +71,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     get_or_create_user(
-        PLATFORM,
+        CHAT_PLATFORM,
         update.effective_user.id,
-        update.effective_user.username
+        update.effective_user.username,
     )
 
-    get_or_create_channel(
-        PLATFORM,
-        update.effective_chat.id
+    get_or_create_channel(CHAT_PLATFORM, update.effective_chat.id)
+
+    mark_chat_first_seen(
+        CHAT_PLATFORM,
+        str(update.effective_chat.id),
+        str(update.effective_user.id),
     )
 
     await update.message.reply_text(
@@ -181,16 +187,29 @@ async def cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("用法：/cmd uptime")
         return
 
+    user_db_id = get_or_create_user(
+        CHAT_PLATFORM,
+        update.effective_user.id,
+        update.effective_user.username,
+    )
+    channel_db_id = get_or_create_channel(
+        CHAT_PLATFORM,
+        update.effective_chat.id,
+    )
+    extra = list(context.args[1:]) if len(context.args) > 1 else None
+
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(
         executor,
         partial(
             run_command,
-            update.effective_user.id,
-            update.effective_chat.id,
-            BOT_ID,
-            1,
+            user_db_id,
+            channel_db_id,
+            BOT_INSTANCE_ID,
+            NODE_ID,
+            CHAT_PLATFORM,
             context.args[0],
+            extra,
         ),
     )
 
@@ -216,10 +235,21 @@ async def ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("用法：/ai 问题")
         return
 
-    result = ask_llm(
+    user_db_id = get_or_create_user(
+        CHAT_PLATFORM,
         update.effective_user.id,
+        update.effective_user.username,
+    )
+    channel_db_id = get_or_create_channel(
+        CHAT_PLATFORM,
         update.effective_chat.id,
-        None,
+    )
+
+    result = ask_llm(
+        user_db_id,
+        channel_db_id,
+        BOT_INSTANCE_ID,
+        DEFAULT_LLM_PROVIDER_ID,
         {
             "api_key": OPENAI_API_KEY,
             "api_url": OPENAI_API_URL,
@@ -268,7 +298,22 @@ def main():
     logger.info("Bot starting")
 
     if not BOT_TOKEN:
-        print("❌ BOT_TOKEN missing")
+        logger.error("TELEGRAM_BOT_TOKEN / BOT_TOKEN missing")
+        sys.exit(1)
+
+    try:
+        if not bot_instance_exists(BOT_INSTANCE_ID):
+            logger.warning(
+                "BOT_INSTANCE_ID=%s missing or disabled in bot_instance; "
+                "run init.sql or insert a bot_instance row so audit and allowlists align",
+                BOT_INSTANCE_ID,
+            )
+    except pymysql.err.OperationalError as e:
+        logger.error(
+            "无法连接 MySQL（%s）。请确认 mysqld 已启动，且 .env 中 "
+            "MYSQL_HOST / MYSQL_PORT / MYSQL_USER / MYSQL_PASSWORD / MYSQL_DATABASE 正确。",
+            e,
+        )
         sys.exit(1)
 
     try:
