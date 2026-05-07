@@ -5,7 +5,8 @@ def main_menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📊 系统状态", callback_data="menu:status")],
         [InlineKeyboardButton("⚙️ 命令执行", callback_data="menu:cmd")],
-        [InlineKeyboardButton("🧠 AI助手", callback_data="menu:ai")]
+        [InlineKeyboardButton("🧠 AI助手", callback_data="menu:ai")],
+        [InlineKeyboardButton("💬 接收消息", callback_data="menu:msg")]
     ])
 
 
@@ -26,5 +27,11 @@ def cmd_menu():
 def ai_menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📖 使用说明", callback_data="menu:ai_help")],
+        [InlineKeyboardButton("⬅️ 返回主菜单", callback_data="menu:back")]
+    ])
+
+def msg_menu():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📖 使用说明", callback_data="menu:msg_help")],
         [InlineKeyboardButton("⬅️ 返回主菜单", callback_data="menu:back")]
     ])

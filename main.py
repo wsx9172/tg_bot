@@ -1,10 +1,12 @@
 import asyncio
 import logging
-import sys
-from functools import partial
-
+import sysimport os
 import pymysql
+
+from datetime import datetime
+from functools import partial
 from telegram import Update
+
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -39,6 +41,11 @@ logger = logging.getLogger(__name__)
 
 MAX_MESSAGE_LENGTH = 4096
 
+# 接收消息目录
+MSG_DIR = "/opt/tg_bot/messages"
+
+# 确保消息目录存在
+os.makedirs(MSG_DIR, exist_ok=True)
 
 # =========================
 # 权限
@@ -155,6 +162,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         # =========================
+        # 接收消息页面
+        # =========================
+        elif data == "menu:msg":
+            await query.message.edit_text(
+                "💬 接收消息模块\n\n使用方式：\n/msg 你的消息",
+                reply_markup=msg_menu()
+            )
+
+        # =========================
         # 命令说明
         # =========================
         elif data == "menu:cmd_help":
@@ -260,6 +276,39 @@ async def ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await reply_long_text(update.message, result)
 
+async def msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """接收消息并保存到文件"""
+    if not auth(update):
+        return
+    
+    # 获取用户输入
+    content = " ".join(context.args)
+    if not content:
+        await update.message.reply_text("用法：/msg <内容>\n例如：/msg this is a token")
+        return
+    
+    try:
+        # 生成文件名：msg_2024-12-14_10-30-45-123456.txt
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
+        filename = f"msg_{timestamp}.txt"
+        filepath = os.path.join(MSG_DIR, filename)
+        
+        # 写入文件
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(content)
+        
+        # 返回成功信息
+        await update.message.reply_text(
+            f"✅ 消息已保存\n\n"
+            f"文件: {filename}\n"
+            f"内容: {content}"
+        )
+        
+        logger.info(f"Message saved: {filepath}")
+    
+    except Exception as e:
+        await update.message.reply_text(f"❌ 保存失败: {e}")
+        logger.error(f"Failed to save message: {e}")
 
 # =========================
 # 告警
@@ -328,6 +377,7 @@ def main():
         app.add_handler(CommandHandler("cmd", cmd))
         app.add_handler(CommandHandler("status", status))
         app.add_handler(CommandHandler("ai", ai))
+        app.add_handler(CommandHandler("msg", msg))
 
         app.add_handler(CallbackQueryHandler(button_handler))
 
