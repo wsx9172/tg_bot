@@ -24,16 +24,13 @@ async def send_test_alert(custom_message=None):
     
     # 构造测试告警消息
     if custom_message:
-        test_alerts = [custom_message]
+        message_text = custom_message
         print(f"\n📝 自定义消息内容:")
     else:
-        test_alerts = [
-            "🚨 告警测试\n\n" + "\n".join("此内容为测试")
-        ]
+        message_text = "此内容为测试"
         print(f"\n📊 测试告警内容:")
     
-    for alert in test_alerts:
-        print(f"  {alert}")
+    print(f"  {message_text}")
     
     if not ALLOWED_USERS:
         print("\n❌ 错误: ALLOWED_USERS 为空")
@@ -48,7 +45,13 @@ async def send_test_alert(custom_message=None):
     
     for uid in ALLOWED_USERS:
         try:
-            await app.bot.send_message(uid, test_alerts)
+            # ✅ 自定义参数不加前缀，默认参数加前缀
+            if custom_message:
+                msg = message_text
+            else:
+                msg = f"🚨 告警测试\n\n{message_text}"
+            
+            await app.bot.send_message(uid, msg)
             print(f"  ✅ 用户 {uid} 发送成功")
             success_count += 1
         except Exception as e:
@@ -60,10 +63,9 @@ async def send_test_alert(custom_message=None):
     print("="*60)
 
 if __name__ == "__main__":
-    # 检查是否有命令行参数
     custom_msg = None
     if len(sys.argv) > 1:
         custom_msg = sys.argv[1]
-        print(f"📌 使用自定义参数: {custom_msg}")
+        print(f"📌 使用自定义参数: {custom_msg}\n")
     
     asyncio.run(send_test_alert(custom_msg))
