@@ -57,6 +57,12 @@ MYSQL_CONFIG = {
 
 NODE_ID = _int_env("NODE_ID", 1)
 
+WEBHOOK_DOMAIN = os.getenv("WEBHOOK_DOMAIN", "").strip()
+WEBHOOK_LISTEN = (os.getenv("WEBHOOK_LISTEN") or "0.0.0.0").strip()
+WEBHOOK_PORT = _int_env("WEBHOOK_PORT", 33333)
+WEBHOOK_URL_PATH = (os.getenv("WEBHOOK_URL_PATH") or BOT_TOKEN).strip().lstrip("/")
+WEBHOOK_SECRET_TOKEN = (os.getenv("WEBHOOK_SECRET_TOKEN", "") or "").strip() or None
+
 CPU_ALERT = _int_env("CPU_ALERT", 85)
 MEM_ALERT = _int_env("MEM_ALERT", 85)
 DISK_ALERT = _int_env("DISK_ALERT", 90)

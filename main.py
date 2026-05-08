@@ -25,6 +25,11 @@ from config import (
     CHAT_PLATFORM,
     DEFAULT_LLM_PROVIDER_ID,
     NODE_ID,
+    WEBHOOK_DOMAIN,
+    WEBHOOK_LISTEN,
+    WEBHOOK_PORT,
+    WEBHOOK_SECRET_TOKEN,
+    WEBHOOK_URL_PATH,
 )
 from db import bot_instance_exists, mark_chat_first_seen
 from monitor import get_system_status, check_alerts
@@ -351,6 +356,14 @@ def main():
         logger.error("TELEGRAM_BOT_TOKEN / BOT_TOKEN missing")
         sys.exit(1)
 
+    if not WEBHOOK_DOMAIN:
+        logger.error("WEBHOOK_DOMAIN missing")
+        sys.exit(1)
+
+    if not WEBHOOK_URL_PATH:
+        logger.error("WEBHOOK_URL_PATH missing")
+        sys.exit(1)
+
     try:
         if not bot_instance_exists(BOT_INSTANCE_ID):
             logger.warning(
@@ -382,9 +395,22 @@ def main():
 
         app.add_handler(CallbackQueryHandler(button_handler))
 
-        logger.info("Bot initialized; polling started")
+        webhook_url = f"https://{WEBHOOK_DOMAIN}/{WEBHOOK_URL_PATH}"
 
-        app.run_polling()
+        logger.info(
+            "Bot initialized; webhook starting on %s:%s -> %s",
+            WEBHOOK_LISTEN,
+            WEBHOOK_PORT,
+            webhook_url,
+        )
+
+        app.run_webhook(
+            listen=WEBHOOK_LISTEN,
+            port=WEBHOOK_PORT,
+            url_path=WEBHOOK_URL_PATH,
+            webhook_url=webhook_url,
+            secret_token=WEBHOOK_SECRET_TOKEN,
+        )
 
     except Exception:
         logger.exception("fatal error starting bot")
