@@ -70,26 +70,33 @@ MYSQL_DATABASE=telegram_bot
 执行初始化脚本：
 
 ```bash
-python init_bot.py
+python setup_bot.py
 ```
 
 脚本会完成：
 
 - 读取 `.env`
-- 连接 MySQL
-- 执行 `init.sql`
+- 连接 MySQL，数据库没有表时执行 `init.sql`
 - 调用 Telegram `setWebhook` 注册 webhook
+
+重复执行 `setup_bot.py` 是安全的：如果数据库里已经有表，默认会跳过 `init.sql`，只重新注册 webhook。
 
 只初始化数据库：
 
 ```bash
-python init_bot.py --skip-webhook
+python setup_bot.py --skip-webhook
 ```
 
 只注册 webhook：
 
 ```bash
-python init_bot.py --skip-db
+python setup_bot.py --skip-db
+```
+
+重建数据库表：
+
+```bash
+python setup_bot.py --reset-db --skip-webhook
 ```
 
 ## 启动
@@ -148,6 +155,6 @@ server {
 
 - 域名 HTTPS 证书是否有效
 - Nginx/Caddy 是否正确反代到 `33333`
-- `python init_bot.py --skip-db` 是否成功注册 webhook
+- `python setup_bot.py --skip-db` 是否成功注册 webhook
 - `ALLOWED_USERS` 是否包含你的 Telegram 用户 ID
 - MySQL 连接配置是否正确

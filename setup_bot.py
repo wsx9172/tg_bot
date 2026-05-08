@@ -2,6 +2,7 @@ import argparse
 import logging
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pymysql
 import requests
@@ -20,6 +21,13 @@ logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parent
 DEFAULT_SQL_FILE = ROOT / "init.sql"
 TELEGRAM_API_TIMEOUT = 30
+PLACEHOLDER_WEBHOOK_DOMAINS = {"bot.domain.com", "example.com", "localhost"}
+
+
+def _mysql_server_config() -> dict:
+    db_config = dict(MYSQL_CONFIG)
+    db_config.pop("database", None)
+    return db_config
 
 
 def _masked_webhook_url(webhook_url: str) -> str:
@@ -28,13 +36,32 @@ def _masked_webhook_url(webhook_url: str) -> str:
     return webhook_url.replace(WEBHOOK_URL_PATH, "***", 1)
 
 
+def count_existing_tables() -> int:
+    database = MYSQL_CONFIG["database"]
+    connection = pymysql.connect(**_mysql_server_config())
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COUNT(*)
+                FROM information_schema.tables
+                WHERE table_schema = %s
+                """,
+                (database,),
+            )
+            row = cursor.fetchone()
+            return int(row[0] if row else 0)
+    finally:
+        connection.close()
+
+
 def execute_init_sql(sql_file: Path) -> None:
     if not sql_file.is_file():
         raise FileNotFoundError(f"SQL file not found: {sql_file}")
 
     sql = sql_file.read_text(encoding="utf-8")
-    db_config = dict(MYSQL_CONFIG)
-    db_config.pop("database", None)
+    db_config = _mysql_server_config()
     db_config["client_flag"] = CLIENT.MULTI_STATEMENTS
 
     logger.info(
@@ -56,15 +83,47 @@ def execute_init_sql(sql_file: Path) -> None:
     logger.info("Executed %s", sql_file)
 
 
+def setup_database(sql_file: Path, reset_db: bool) -> None:
+    existing_tables = count_existing_tables()
+    if existing_tables > 0 and not reset_db:
+        logger.info(
+            "Database %s already has %s table(s); skipping init.sql. "
+            "Use --reset-db to rebuild tables.",
+            MYSQL_CONFIG["database"],
+            existing_tables,
+        )
+        return
+
+    if existing_tables > 0 and reset_db:
+        logger.warning(
+            "Resetting database %s; init.sql may drop and recreate existing tables.",
+            MYSQL_CONFIG["database"],
+        )
+
+    execute_init_sql(sql_file)
+
+
 def register_webhook() -> None:
     if not BOT_TOKEN:
         raise ValueError("TELEGRAM_BOT_TOKEN / BOT_TOKEN missing")
     if not WEBHOOK_DOMAIN:
         raise ValueError("WEBHOOK_DOMAIN missing")
+    if WEBHOOK_DOMAIN in PLACEHOLDER_WEBHOOK_DOMAINS:
+        raise ValueError(
+            f"WEBHOOK_DOMAIN is still a placeholder: {WEBHOOK_DOMAIN}. "
+            "Set it to your real public HTTPS domain in .env."
+        )
     if not WEBHOOK_URL_PATH:
         raise ValueError("WEBHOOK_URL_PATH missing")
 
     webhook_url = f"https://{WEBHOOK_DOMAIN}/{WEBHOOK_URL_PATH}"
+    parsed_webhook_url = urlparse(webhook_url)
+    if parsed_webhook_url.port and parsed_webhook_url.port not in {80, 88, 443, 8443}:
+        raise ValueError(
+            "Telegram only accepts webhook URLs on ports 80, 88, 443, or 8443. "
+            "Use HTTPS reverse proxy on 443 and proxy to the local bot port."
+        )
+
     api_url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
     payload = {"url": webhook_url}
     if WEBHOOK_SECRET_TOKEN:
@@ -72,9 +131,17 @@ def register_webhook() -> None:
 
     logger.info("Registering Telegram webhook: %s", _masked_webhook_url(webhook_url))
     response = requests.post(api_url, data=payload, timeout=TELEGRAM_API_TIMEOUT)
-    response.raise_for_status()
 
-    result = response.json()
+    try:
+        result = response.json()
+    except ValueError:
+        response.raise_for_status()
+        raise RuntimeError(f"Telegram returned non-JSON response: {response.text}")
+
+    if response.status_code >= 400:
+        description = result.get("description", response.text)
+        raise RuntimeError(f"Telegram setWebhook HTTP {response.status_code}: {description}")
+
     if not result.get("ok"):
         raise RuntimeError(f"Telegram setWebhook failed: {result}")
 
@@ -83,7 +150,7 @@ def register_webhook() -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Initialize database schema and register Telegram webhook."
+        description="Set up database schema and register Telegram webhook."
     )
     parser.add_argument(
         "--sql-file",
@@ -92,9 +159,14 @@ def parse_args() -> argparse.Namespace:
         help="Path to init.sql. Defaults to ./init.sql.",
     )
     parser.add_argument(
+        "--reset-db",
+        action="store_true",
+        help="Execute init.sql even when tables already exist. This may erase data.",
+    )
+    parser.add_argument(
         "--skip-db",
         action="store_true",
-        help="Skip executing init.sql.",
+        help="Skip database setup.",
     )
     parser.add_argument(
         "--skip-webhook",
@@ -113,14 +185,14 @@ def main() -> int:
 
     try:
         if not args.skip_db:
-            execute_init_sql(args.sql_file)
+            setup_database(args.sql_file, args.reset_db)
         if not args.skip_webhook:
             register_webhook()
     except Exception:
-        logger.exception("Initialization failed")
+        logger.exception("Setup failed")
         return 1
 
-    logger.info("Initialization completed")
+    logger.info("Setup completed")
     return 0
 
 
