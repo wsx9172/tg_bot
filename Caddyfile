@@ -1,3 +1,0 @@
-{$WEBHOOK_DOMAIN} {
-    reverse_proxy bot:33333
-}
