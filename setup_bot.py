@@ -9,6 +9,7 @@ import requests
 from pymysql.constants import CLIENT
 
 from config import (
+    BOT_MODE,
     BOT_TOKEN,
     MYSQL_CONFIG,
     WEBHOOK_DOMAIN,
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parent
 DEFAULT_SQL_FILE = ROOT / "init.sql"
 TELEGRAM_API_TIMEOUT = 30
-PLACEHOLDER_WEBHOOK_DOMAINS = {"bot.domain.com", "example.com", "localhost"}
+PLACEHOLDER_WEBHOOK_DOMAINS = {"bot.domain", "example.com", "localhost"}
 
 
 def _mysql_server_config() -> dict:
@@ -148,9 +149,42 @@ def register_webhook() -> None:
     logger.info("Telegram webhook registered: %s", result.get("description", "ok"))
 
 
+def delete_webhook() -> None:
+    if not BOT_TOKEN:
+        raise ValueError("TELEGRAM_BOT_TOKEN / BOT_TOKEN missing")
+
+    api_url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
+    logger.info("Deleting Telegram webhook for polling mode")
+    response = requests.post(api_url, timeout=TELEGRAM_API_TIMEOUT)
+
+    try:
+        result = response.json()
+    except ValueError:
+        response.raise_for_status()
+        raise RuntimeError(f"Telegram returned non-JSON response: {response.text}")
+
+    if response.status_code >= 400:
+        description = result.get("description", response.text)
+        raise RuntimeError(f"Telegram deleteWebhook HTTP {response.status_code}: {description}")
+
+    if not result.get("ok"):
+        raise RuntimeError(f"Telegram deleteWebhook failed: {result}")
+
+    logger.info("Telegram webhook deleted: %s", result.get("description", "ok"))
+
+
+def sync_telegram_webhook() -> None:
+    if BOT_MODE == "webhook":
+        register_webhook()
+    elif BOT_MODE == "polling":
+        delete_webhook()
+    else:
+        raise ValueError(f"BOT_MODE must be webhook or polling, got {BOT_MODE}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Set up database schema and register Telegram webhook."
+        description="Set up database schema and sync Telegram webhook state."
     )
     parser.add_argument(
         "--sql-file",
@@ -171,7 +205,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skip-webhook",
         action="store_true",
-        help="Skip Telegram setWebhook registration.",
+        help="Skip Telegram webhook sync.",
     )
     return parser.parse_args()
 
@@ -187,7 +221,7 @@ def main() -> int:
         if not args.skip_db:
             setup_database(args.sql_file, args.reset_db)
         if not args.skip_webhook:
-            register_webhook()
+            sync_telegram_webhook()
     except Exception:
         logger.exception("Setup failed")
         return 1

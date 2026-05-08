@@ -16,6 +16,7 @@ from telegram.ext import (
 )
 
 from config import (
+    BOT_MODE,
     BOT_TOKEN,
     ALLOWED_USERS,
     OPENAI_API_KEY,
@@ -357,13 +358,18 @@ def main():
         logger.error("TELEGRAM_BOT_TOKEN / BOT_TOKEN missing")
         sys.exit(1)
 
-    if not WEBHOOK_DOMAIN:
-        logger.error("WEBHOOK_DOMAIN missing")
+    if BOT_MODE not in {"webhook", "polling"}:
+        logger.error("BOT_MODE must be webhook or polling, got %s", BOT_MODE)
         sys.exit(1)
 
-    if not WEBHOOK_URL_PATH:
-        logger.error("WEBHOOK_URL_PATH missing")
-        sys.exit(1)
+    if BOT_MODE == "webhook":
+        if not WEBHOOK_DOMAIN:
+            logger.error("WEBHOOK_DOMAIN missing")
+            sys.exit(1)
+
+        if not WEBHOOK_URL_PATH:
+            logger.error("WEBHOOK_URL_PATH missing")
+            sys.exit(1)
 
     try:
         if not bot_instance_exists(BOT_INSTANCE_ID):
@@ -396,22 +402,26 @@ def main():
 
         app.add_handler(CallbackQueryHandler(button_handler))
 
-        webhook_url = f"https://{WEBHOOK_DOMAIN}/{WEBHOOK_URL_PATH}"
+        if BOT_MODE == "polling":
+            logger.info("Bot initialized; polling started")
+            app.run_polling()
+        else:
+            webhook_url = f"https://{WEBHOOK_DOMAIN}/{WEBHOOK_URL_PATH}"
 
-        logger.info(
-            "Bot initialized; webhook starting on %s:%s -> %s",
-            WEBHOOK_LISTEN,
-            WEBHOOK_PORT,
-            webhook_url,
-        )
+            logger.info(
+                "Bot initialized; webhook starting on %s:%s -> %s",
+                WEBHOOK_LISTEN,
+                WEBHOOK_PORT,
+                webhook_url,
+            )
 
-        app.run_webhook(
-            listen=WEBHOOK_LISTEN,
-            port=WEBHOOK_PORT,
-            url_path=WEBHOOK_URL_PATH,
-            webhook_url=webhook_url,
-            secret_token=WEBHOOK_SECRET_TOKEN,
-        )
+            app.run_webhook(
+                listen=WEBHOOK_LISTEN,
+                port=WEBHOOK_PORT,
+                url_path=WEBHOOK_URL_PATH,
+                webhook_url=webhook_url,
+                secret_token=WEBHOOK_SECRET_TOKEN,
+            )
 
     except Exception:
         logger.exception("fatal error starting bot")

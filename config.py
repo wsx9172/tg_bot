@@ -27,6 +27,7 @@ def _int_env(name: str, default: int) -> int:
 BOT_TOKEN = (
     os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("BOT_TOKEN") or ""
 ).strip()
+BOT_MODE = (os.getenv("BOT_MODE") or "polling").strip().lower()
 
 _allowed = os.getenv("ALLOWED_USERS", "").strip()
 ALLOWED_USERS = (
