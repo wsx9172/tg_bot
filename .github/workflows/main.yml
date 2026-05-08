@@ -1,0 +1,39 @@
+name: Deploy Bot
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to Ubuntu server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_IP_U }}
+          username: ${{ secrets.SERVER_USER_U }}
+          key: ${{ secrets.SERVER_SSH_KEY_U }}
+          port: ${{ secrets.SERVER_PORT_U }}
+          script: |
+            set -e
+            cd /opt/tg_bot
+            git fetch origin
+            git reset --hard origin/main
+            sudo systemctl restart bot
+
+      - name: Deploy to Oracle server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_IP_O }}
+          username: ${{ secrets.SERVER_USER_O }}
+          key: ${{ secrets.SERVER_SSH_KEY_O }}
+          port: ${{ secrets.SERVER_PORT_O }}
+          script: |
+            set -e
+            cd /opt/tg_bot
+            git fetch origin
+            git reset --hard origin/main
+            sudo systemctl restart bot
