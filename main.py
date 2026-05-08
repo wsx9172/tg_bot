@@ -1,8 +1,10 @@
 import asyncio
+import contextlib
 import logging
 import sys
 import os
 import pymysql
+import uuid
 
 from datetime import datetime
 from functools import partial
@@ -16,6 +18,7 @@ from telegram.ext import (
 )
 
 from config import (
+    BOT_MODE,
     BOT_TOKEN,
     ALLOWED_USERS,
     OPENAI_API_KEY,
@@ -25,6 +28,11 @@ from config import (
     CHAT_PLATFORM,
     DEFAULT_LLM_PROVIDER_ID,
     NODE_ID,
+    WEBHOOK_DOMAIN,
+    WEBHOOK_LISTEN,
+    WEBHOOK_PORT,
+    WEBHOOK_SECRET_TOKEN,
+    WEBHOOK_URL_PATH,
 )
 from db import bot_instance_exists, mark_chat_first_seen
 from monitor import get_system_status, check_alerts
@@ -64,10 +72,17 @@ def auth(update: Update) -> bool:
 
 async def reply_long_text(message, text: str):
     if not text:
-        await message.reply_text("")
         return
     for i in range(0, len(text), MAX_MESSAGE_LENGTH):
         await message.reply_text(text[i : i + MAX_MESSAGE_LENGTH])
+
+# =========================
+# 获取系统状态文本
+# =========================
+async def get_system_status_text() -> str:
+    loop = asyncio.get_event_loop()
+    cpu, mem, disk = await loop.run_in_executor(executor, get_system_status)
+    return f"系统状态\n\nCPU: {cpu}%\nMEM: {mem}%\nDISK: {disk}%"
 
 
 # =========================
@@ -133,13 +148,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 系统状态
         # =========================
         elif data == "menu:status":
-            loop = asyncio.get_event_loop()
-            cpu, mem, disk = await loop.run_in_executor(
-                executor, get_system_status
-            )
-
             await query.message.edit_text(
-                f"📊 系统状态\n\nCPU: {cpu}%\nMEM: {mem}%\nDISK: {disk}%",
+                await get_system_status_text(),
                 reply_markup=status_menu()
             )
 
@@ -187,6 +197,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(
                 "AI功能说明：\n输入 /ai + 问题 即可调用大模型"
             )
+
+        else:
+            logger.warning("unknown callback: %s", data)
 
     except Exception:
         logger.exception("callback handler error")
@@ -237,9 +250,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not auth(update):
         return
 
-    loop = asyncio.get_event_loop()
-    cpu, mem, disk = await loop.run_in_executor(executor, get_system_status)
-    await update.message.reply_text(f"{cpu} {mem} {disk}")
+    await update.message.reply_text(await get_system_status_text())
 
 
 async def ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -289,9 +300,9 @@ async def msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     try:
-        # 生成文件名：msg_2024-12-14_10-30-45-123456.txt
+        # 生成文件名：msg_2024-12-14_10-30-45-123456_ab12cd34.txt
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
-        filename = f"msg_{timestamp}.txt"
+        filename = f"msg_{timestamp}_{uuid.uuid4().hex[:8]}.txt"
         filepath = os.path.join(MSG_DIR, filename)
         
         # 写入文件
@@ -326,13 +337,26 @@ async def alert_loop(app):
                     for uid in ALLOWED_USERS
                 ]
                 await asyncio.gather(*tasks)
+        except asyncio.CancelledError:
+            logger.info("alert loop cancelled")
+            raise
         except Exception:
             logger.exception("alert loop error")
         
         await asyncio.sleep(60)
 
 async def post_init(app):
-    asyncio.create_task(alert_loop(app))
+    app.bot_data["alert_task"] = asyncio.create_task(alert_loop(app))
+
+
+async def post_shutdown(app):
+    task = app.bot_data.pop("alert_task", None)
+    if task:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    executor.shutdown(wait=False, cancel_futures=True)
 
 
 # =========================
@@ -350,6 +374,19 @@ def main():
     if not BOT_TOKEN:
         logger.error("TELEGRAM_BOT_TOKEN / BOT_TOKEN missing")
         sys.exit(1)
+
+    if BOT_MODE not in {"webhook", "polling"}:
+        logger.error("BOT_MODE must be webhook or polling, got %s", BOT_MODE)
+        sys.exit(1)
+
+    if BOT_MODE == "webhook":
+        if not WEBHOOK_DOMAIN:
+            logger.error("WEBHOOK_DOMAIN missing")
+            sys.exit(1)
+
+        if not WEBHOOK_URL_PATH:
+            logger.error("WEBHOOK_URL_PATH missing")
+            sys.exit(1)
 
     try:
         if not bot_instance_exists(BOT_INSTANCE_ID):
@@ -371,6 +408,7 @@ def main():
             Application.builder()
             .token(BOT_TOKEN)
             .post_init(post_init)
+            .post_shutdown(post_shutdown)
             .build()
         )
 
@@ -382,9 +420,26 @@ def main():
 
         app.add_handler(CallbackQueryHandler(button_handler))
 
-        logger.info("Bot initialized; polling started")
+        if BOT_MODE == "polling":
+            logger.info("Bot initialized; polling started")
+            app.run_polling()
+        else:
+            webhook_url = f"https://{WEBHOOK_DOMAIN}/{WEBHOOK_URL_PATH}"
 
-        app.run_polling()
+            logger.info(
+                "Bot initialized; webhook starting on %s:%s -> %s",
+                WEBHOOK_LISTEN,
+                WEBHOOK_PORT,
+                webhook_url,
+            )
+
+            app.run_webhook(
+                listen=WEBHOOK_LISTEN,
+                port=WEBHOOK_PORT,
+                url_path=WEBHOOK_URL_PATH,
+                webhook_url=webhook_url,
+                secret_token=WEBHOOK_SECRET_TOKEN,
+            )
 
     except Exception:
         logger.exception("fatal error starting bot")
