@@ -74,6 +74,14 @@ async def reply_long_text(message, text: str):
     for i in range(0, len(text), MAX_MESSAGE_LENGTH):
         await message.reply_text(text[i : i + MAX_MESSAGE_LENGTH])
 
+# =========================
+# 获取系统状态文本
+# =========================
+async def get_system_status_text() -> str:
+    loop = asyncio.get_event_loop()
+    cpu, mem, disk = await loop.run_in_executor(executor, get_system_status)
+    return f"系统状态\n\nCPU: {cpu}%\nMEM: {mem}%\nDISK: {disk}%"
+
 
 # =========================
 # start（首次进入）
@@ -138,13 +146,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 系统状态
         # =========================
         elif data == "menu:status":
-            loop = asyncio.get_event_loop()
-            cpu, mem, disk = await loop.run_in_executor(
-                executor, get_system_status
-            )
-
             await query.message.edit_text(
-                f"📊 系统状态\n\nCPU: {cpu}%\nMEM: {mem}%\nDISK: {disk}%",
+                await get_system_status_text(),
                 reply_markup=status_menu()
             )
 
@@ -242,9 +245,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not auth(update):
         return
 
-    loop = asyncio.get_event_loop()
-    cpu, mem, disk = await loop.run_in_executor(executor, get_system_status)
-    await update.message.reply_text(f"{cpu} {mem} {disk}")
+    await update.message.reply_text(await get_system_status_text())
 
 
 async def ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
