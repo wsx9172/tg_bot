@@ -364,6 +364,10 @@ async def post_shutdown(app):
     executor.shutdown(wait=False, cancel_futures=True)
 
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    logger.exception("telegram handler error", exc_info=context.error)
+
+
 # =========================
 # main
 # =========================
@@ -424,10 +428,11 @@ def main():
         app.add_handler(CommandHandler("msg", msg))
 
         app.add_handler(CallbackQueryHandler(button_handler))
+        app.add_error_handler(error_handler)
 
         if BOT_MODE == "polling":
             logger.info("Bot initialized; polling started")
-            app.run_polling()
+            app.run_polling(drop_pending_updates=False)
         else:
             webhook_url = f"https://{WEBHOOK_DOMAIN}/{WEBHOOK_URL_PATH}"
 

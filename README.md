@@ -80,7 +80,24 @@ python setup_bot.py
 python main.py
 ```
 
-因此修改 `.env`、`Caddyfile` 或代码后，通常重新执行 `docker compose up -d --build` 即可。
+因此修改 `.env` 或代码后，通常重新执行 `docker compose up -d --build` 即可。
+
+部署目录至少需要：
+
+```text
+docker-compose.yml
+.env
+```
+
+Caddy 配置会由 `docker-compose.yml` 根据 `WEBHOOK_DOMAIN` 自动生成，不需要提前创建 `Caddyfile`。
+
+当前 Compose 默认直接使用镜像：
+
+```text
+wsx9172/tg-bot-chatops:latest
+```
+
+如果要在服务器本地构建镜像，再把 `bot` 服务加回 `build: .`，并确保部署目录里有完整项目源码和 `Dockerfile`。
 
 查看日志：
 
