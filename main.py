@@ -1,8 +1,10 @@
 import asyncio
+import contextlib
 import logging
 import sys
 import os
 import pymysql
+import uuid
 
 from datetime import datetime
 from functools import partial
@@ -70,7 +72,6 @@ def auth(update: Update) -> bool:
 
 async def reply_long_text(message, text: str):
     if not text:
-        await message.reply_text("")
         return
     for i in range(0, len(text), MAX_MESSAGE_LENGTH):
         await message.reply_text(text[i : i + MAX_MESSAGE_LENGTH])
@@ -197,6 +198,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "AI功能说明：\n输入 /ai + 问题 即可调用大模型"
             )
 
+        else:
+            logger.warning("unknown callback: %s", data)
+
     except Exception:
         logger.exception("callback handler error")
 
@@ -296,9 +300,9 @@ async def msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     try:
-        # 生成文件名：msg_2024-12-14_10-30-45-123456.txt
+        # 生成文件名：msg_2024-12-14_10-30-45-123456_ab12cd34.txt
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
-        filename = f"msg_{timestamp}.txt"
+        filename = f"msg_{timestamp}_{uuid.uuid4().hex[:8]}.txt"
         filepath = os.path.join(MSG_DIR, filename)
         
         # 写入文件
@@ -333,13 +337,26 @@ async def alert_loop(app):
                     for uid in ALLOWED_USERS
                 ]
                 await asyncio.gather(*tasks)
+        except asyncio.CancelledError:
+            logger.info("alert loop cancelled")
+            raise
         except Exception:
             logger.exception("alert loop error")
         
         await asyncio.sleep(60)
 
 async def post_init(app):
-    asyncio.create_task(alert_loop(app))
+    app.bot_data["alert_task"] = asyncio.create_task(alert_loop(app))
+
+
+async def post_shutdown(app):
+    task = app.bot_data.pop("alert_task", None)
+    if task:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    executor.shutdown(wait=False, cancel_futures=True)
 
 
 # =========================
@@ -391,6 +408,7 @@ def main():
             Application.builder()
             .token(BOT_TOKEN)
             .post_init(post_init)
+            .post_shutdown(post_shutdown)
             .build()
         )
 
