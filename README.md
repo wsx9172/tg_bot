@@ -1,17 +1,42 @@
 # Telegram ChatOps Bot
 
-一个基于 Telegram 的 ChatOps 运维机器人，支持菜单和命令两种交互方式，可执行预置运维命令、查看系统状态、接收告警、调用大模型助手，并把操作记录写入 MySQL。
+一个运行在宿主机上的 Telegram ChatOps 运维机器人，支持菜单和命令两种交互方式，可查看宿主机状态、执行白名单命令、接收告警、调用大模型助手，并把操作记录写入 MySQL。
+
+> 说明：本项目会读取宿主机系统状态并执行宿主机命令，不建议用普通 Docker 容器部署 bot 主进程。
 
 ## 功能
 
 - Telegram webhook 或 polling 接入
 - 用户白名单校验
-- `/cmd` 执行预置运维命令
 - `/status` 查看 CPU、内存、磁盘状态
+- `/cmd` 执行预置运维命令
 - `/ai` 调用大模型问答
 - `/msg` 保存消息到本地文件
 - 定时系统告警推送
 - MySQL 初始化与审计数据存储
+
+## 环境要求
+
+- Python 3.10+
+- MySQL 8.x 或兼容版本
+- Telegram Bot Token
+- webhook 模式需要 HTTPS 域名和反向代理，例如 Caddy 或 Nginx
+
+## 安装
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Windows PowerShell:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
 
 ## 配置
 
@@ -34,10 +59,9 @@ WEBHOOK_PORT=33333
 WEBHOOK_URL_PATH=tg_webhook_xxx
 WEBHOOK_SECRET_TOKEN=可选的随机字符串
 
-MYSQL_HOST=mysql
+MYSQL_HOST=127.0.0.1
 MYSQL_PORT=3306
-MYSQL_ROOT_PASSWORD=你的 MySQL root 密码
-MYSQL_USER=tg_bot
+MYSQL_USER=你的数据库用户
 MYSQL_PASSWORD=你的数据库密码
 MYSQL_DATABASE=telegram_bot
 ```
@@ -49,91 +73,60 @@ MYSQL_DATABASE=telegram_bot
 
 `WEBHOOK_URL_PATH` 建议使用随机字符串，不需要前导 `/`。如果留空，程序会默认使用 `TELEGRAM_BOT_TOKEN` 作为路径。
 
-## Docker Compose
-
-Compose 会启动三个容器：
-
-- `bot`：运行 Telegram bot
-- `caddy`：自动申请/续期 HTTPS 证书，并反向代理到 bot 的 `33333` 端口
-- `mysql`：运行 MySQL 8，存储 bot 数据
-
-Caddy 不需要手动挂载证书，但需要确保：
-
-- `WEBHOOK_DOMAIN` 已解析到这台服务器
-- 服务器公网 `80` 和 `443` 端口可访问
-
-启动：
-
-```bash
-docker compose up -d --build
-```
-
-`bot` 镜像使用 `entrypoint.sh` 启动。容器启动时会先执行：
+## 初始化
 
 ```bash
 python setup_bot.py
 ```
 
-然后再执行默认命令：
+脚本会完成：
+
+- 读取 `.env`
+- 连接 MySQL，数据库没有表时执行 `init.sql`
+- 根据 `BOT_MODE` 同步 Telegram webhook 状态
+
+重复执行 `setup_bot.py` 是安全的：如果数据库里已经有表，默认会跳过 `init.sql`。
+
+只初始化数据库，不同步 Telegram webhook 状态：
+
+```bash
+python setup_bot.py --skip-webhook
+```
+
+只同步 Telegram webhook 状态：
+
+```bash
+python setup_bot.py --skip-db
+```
+
+重建数据库表：
+
+```bash
+python setup_bot.py --reset-db --skip-webhook
+```
+
+## 启动
 
 ```bash
 python main.py
 ```
 
-因此修改 `.env`、`Caddyfile` 或代码后，通常重新执行 `docker compose up -d --build` 即可。
+如果 `BOT_MODE=polling`，程序会直接启动 polling。
 
-查看日志：
+如果 `BOT_MODE=webhook`，程序会监听：
 
-```bash
-docker compose logs -f bot caddy mysql
+```text
+0.0.0.0:33333
 ```
 
-停止服务：
+生产环境建议用 systemd 托管 bot 进程，并用 Caddy 或 Nginx 在宿主机上提供 HTTPS，反向代理到 `127.0.0.1:33333`。
 
-```bash
-docker compose down
-```
+Caddy 示例：
 
-MySQL 数据和 Caddy 证书数据会保存到 Docker volumes：
-
-- `mysql_data`
-- `caddy_data`
-- `caddy_config`
-
-## 手动初始化
-
-一般不需要手动执行，因为 `entrypoint.sh` 会自动执行 setup。
-
-如果只想手动同步数据库和 Telegram webhook 状态：
-
-```bash
-docker compose run --rm bot python setup_bot.py
-```
-
-如果想跳过容器启动时的 setup：
-
-```bash
-SKIP_SETUP=1 docker compose up -d --build
-```
-
-## 本地运行
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python setup_bot.py
-python main.py
-```
-
-Windows PowerShell:
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python setup_bot.py
-python main.py
+```caddyfile
+bot.risun.wang {
+    reverse_proxy 127.0.0.1:33333
+}
 ```
 
 ## 使用
@@ -168,8 +161,8 @@ python setup_bot.py --skip-db
 如果 webhook 模式收不到消息，检查：
 
 - 域名 DNS 是否指向服务器
-- 服务器 `80` / `443` 是否开放给 Caddy
-- `docker compose logs -f caddy` 中是否有证书申请错误
+- 反向代理是否正确转发到 `127.0.0.1:33333`
+- `python setup_bot.py --skip-db` 是否成功注册 webhook
 - `WEBHOOK_DOMAIN`、`WEBHOOK_URL_PATH` 和 Telegram webhook 注册信息是否一致
 - `ALLOWED_USERS` 是否包含你的 Telegram 用户 ID
 - MySQL 连接配置是否正确
