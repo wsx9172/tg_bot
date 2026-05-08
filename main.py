@@ -49,6 +49,7 @@ executor = ThreadPoolExecutor(max_workers=2)
 logger = logging.getLogger(__name__)
 
 MAX_MESSAGE_LENGTH = 4096
+MAIN_MENU_TEXT = "🤖 Linux 运维控制台\n请选择功能："
 
 # 接收消息目录
 MSG_DIR = "/opt/tg_bot/messages"
@@ -75,6 +76,13 @@ async def reply_long_text(message, text: str):
         return
     for i in range(0, len(text), MAX_MESSAGE_LENGTH):
         await message.reply_text(text[i : i + MAX_MESSAGE_LENGTH])
+
+
+async def show_main_menu(message):
+    await message.reply_text(
+        MAIN_MENU_TEXT,
+        reply_markup=main_menu()
+    )
 
 # =========================
 # 获取系统状态文本
@@ -107,10 +115,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         str(update.effective_user.id),
     )
 
-    await update.message.reply_text(
-        "🤖 Linux 运维控制台\n请选择功能：",
-        reply_markup=main_menu()
-    )
+    await show_main_menu(update.message)
 
 
 # =========================
@@ -140,7 +145,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # =========================
         if data == "menu:back":
             await query.message.edit_text(
-                "🤖 Linux 运维控制台\n请选择功能：",
+                MAIN_MENU_TEXT,
                 reply_markup=main_menu()
             )
 
