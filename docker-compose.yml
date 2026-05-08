@@ -23,8 +23,7 @@ services:
       start_period: 30s
 
   bot:
-    build: .
-    image: tg-chatops-bot:latest
+    image: wsx9172/tg-chatops-bot:latest
     container_name: tg-chatops-bot
     restart: unless-stopped
     depends_on:
@@ -51,8 +50,17 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    command:
+      - sh
+      - -c
+      - |
+        cat > /etc/caddy/Caddyfile <<EOF
+        ${WEBHOOK_DOMAIN} {
+            reverse_proxy bot:33333
+        }
+        EOF
+        exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
 
