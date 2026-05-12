@@ -167,6 +167,28 @@ def log_llm(user_id, channel_id, bot_instance_id, provider_id, prompt, response)
         conn.close()
 
 
+def get_recent_llm_messages(user_id, channel_id, bot_instance_id, limit=6):
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT prompt, response
+                FROM llm_log
+                WHERE user_id=%s
+                  AND channel_id=%s
+                  AND bot_instance_id=%s
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (user_id, channel_id, bot_instance_id, limit),
+            )
+            rows = cur.fetchall()
+            return list(reversed(rows))
+    finally:
+        conn.close()
+
+
 def mark_chat_first_seen(platform, external_chat_id, external_user_id):
     conn = get_conn()
     try:

@@ -70,6 +70,6 @@ DISK_ALERT = _int_env("DISK_ALERT", 90)
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_API_URL = os.getenv(
-    "OPENAI_API_URL", "https://api.openai.com/v1/chat/completions"
+    "OPENAI_API_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"
 )
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "deepseek-v4-pro")
