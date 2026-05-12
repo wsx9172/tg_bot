@@ -1,10 +1,9 @@
-import datetime
 import logging
-import os
 import json
-from typing import Dict, List, Optional
+from typing import Dict, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
+from datetime import datetime
 import requests
 from openai import OpenAI
 
