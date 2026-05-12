@@ -38,7 +38,7 @@ LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "log")
 LOG_FILE = os.path.join(LOG_DIR, "bot.log")
 LOG_MAX_BYTES = 10 * 1024 * 1024  # 单个日志文件最大 10MB
-LOG_BACKUP_COUNT = 5  # 保留 5 个备份文件
+LOG_BACKUP_COUNT = 10  # 保留 5 个备份文件
 
 # 自动创建 log 目录
 if not os.path.exists(LOG_DIR):

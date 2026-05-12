@@ -516,7 +516,7 @@ def _handle_tool_calls(tool_calls: List, messages: List[Dict]) -> List[Dict]:
 
 
 @log_api_call(call_label="调用 LLM API")
-def _call_llm_with_tools(client, model, messages, tools, tool_choice="auto"):
+def _call_llm(client, model, messages, tools, tool_choice="auto"):
     """
     调用 LLM API
     
@@ -638,7 +638,7 @@ def ask_llm(
         tools = [SEARCH_TOOL_SCHEMA] + SYSTEM_TOOL_SCHEMAS if enable_search else SYSTEM_TOOL_SCHEMAS
         
         # 第一次 API 调用：允许模型使用工具获取实时信息
-        completion = _call_llm_with_tools(client, model, messages, tools)
+        completion = _call_llm(client, model, messages, tools)
 
         # 如果模型请求使用工具，则处理工具调用并进行第二次 API 调用
         if completion.choices[0].message.tool_calls:
@@ -651,7 +651,7 @@ def ask_llm(
             )
             
             # 第二次调用：基于工具结果生成最终回复（禁止再次调用工具）
-            completion = _call_llm_without_tools(client, model, messages, "none")
+            completion = _call_llm(client, model, messages, "none")
 
         result = completion.choices[0].message.content
         logger.info(f"LLM response received: user={user_id}, response_len={len(result)}")
