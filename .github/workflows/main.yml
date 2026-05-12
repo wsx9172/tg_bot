@@ -36,4 +36,5 @@ jobs:
             cd /opt/tg_bot
             git fetch origin
             git reset --hard origin/main
+            sudo pip install -r requirements.txt
             sudo systemctl restart bot
