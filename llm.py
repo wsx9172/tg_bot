@@ -114,6 +114,27 @@ Rules:
 - Warn before dangerous operations
 """.strip()
 
+
+def _get_current_time_message() -> str:
+    """
+    生成包含当前系统时间的状态消息
+    
+    将时间作为系统状态信息注入，帮助模型了解当前时间上下文，减少因训练数据截止导致的幻觉。
+    此消息应作为独立的 system message 添加到消息列表中。
+    
+    Returns:
+        包含当前时间的系统状态消息字符串
+    """
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z")
+    
+    time_message = (
+        f"SysCurrent systemtem time: {current_time}. "
+        "Use for time-aware responses."
+    )
+    
+    return time_message
+
+
 # 定义搜索工具的 schema
 SEARCH_TOOL_SCHEMA = {
     "type": "function",
@@ -580,7 +601,11 @@ def _build_messages(user_id, channel_id, bot_instance_id, prompt):
     构建 LLM 对话消息历史
     
     从数据库加载最近的对话历史，并与当前用户输入组合成完整的消息列表。
-    包含系统提示、历史对话和当前问题。
+    消息结构：
+    1. System message: 固定的角色定义和规则（SYSTEM_PROMPT）
+    2. System message: 动态的系统状态（当前时间）
+    3. Historical messages: 历史对话记录
+    4. User message: 当前用户问题
     
     Args:
         user_id: 用户唯一标识符
@@ -589,9 +614,14 @@ def _build_messages(user_id, channel_id, bot_instance_id, prompt):
         prompt: 当前用户的问题或指令
     
     Returns:
-        包含系统提示、历史对话和当前问题的完整消息列表
+        包含系统提示、系统状态、历史对话和当前问题的完整消息列表
     """
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    # 构建消息列表：先添加固定的系统提示
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        # 注入当前系统时间作为独立的 system message（系统状态）
+        {"role": "system", "content": _get_current_time_message()}
+    ]
 
     try:
         history = get_recent_llm_messages(
