@@ -166,3 +166,6 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "deepseek-v4-pro")
 
 # LLM 搜索功能配置
 ENABLE_SEARCH = os.getenv("ENABLE_SEARCH", "true").lower() in ("true", "1", "yes")
+
+# searXNG 搜索引擎配置
+SEARCH_BASE_URL = os.getenv("SEARCH_BASE_URL").strip().rstrip("/")

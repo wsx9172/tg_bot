@@ -4,10 +4,12 @@ import json
 from typing import Dict, List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
+import requests
 from openai import OpenAI
 
 from db import get_recent_llm_messages, log_llm
 from system_tools import SYSTEM_TOOLS, SYSTEM_TOOL_SCHEMAS
+from config import SEARCH_BASE_URL
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +139,6 @@ SEARCH_TOOL_SCHEMA = {
     }
 }
 
-
 def _config_value(config, *names, default=None):
     """
     从配置字典中按优先级获取配置值
@@ -230,70 +231,103 @@ def _sanitize_snippet(snippet: str, max_length: int = MAX_SNIPPET_LENGTH) -> str
 
 def _web_search(query: str, num_results: int = 3) -> Dict:
     """
-    使用 DuckDuckGo 执行网络搜索
+    使用 searXNG 执行网络搜索
+    
+    通过内网部署的 searXNG 搜索引擎执行搜索，返回结构化的搜索结果。
     
     Args:
         query: 搜索关键词
         num_results: 返回结果数量（1-5）
     
     Returns:
-        搜索结果字典
+        搜索结果字典，包含状态、查询词、来源和结果列表
     """
-    logger.info(f"Executing web search with DuckDuckGo: query='{query}', num_results={num_results}")
+    logger.info(f"Executing web search with searXNG: query='{query}', num_results={num_results}")
     
     # 限制结果数量范围
     num_results = max(1, min(5, num_results))
     
     try:
-        # 尝试导入 duckduckgo_search
-        from duckduckgo_search import DDGS
+        # 构建 searXNG API 请求 URL
+        search_url = f"{SEARCH_BASE_URL}/search"
         
-        logger.debug("Using DuckDuckGo Search API")
+        # 准备请求参数
+        params = {
+            "q": query,
+            "format": "json",
+            "pageno": 1,
+            "categories": "general",
+            "language": "zh-CN"
+        }
+        
+        logger.debug(f"Sending request to searXNG: url={search_url}, params={params}")
+        
+        # 发送 HTTP GET 请求，设置超时
+        response = requests.get(search_url, params=params, timeout=10)
+        response.raise_for_status()
+        
+        # 解析 JSON 响应
+        data = response.json()
         
         results_list = []
-        # 添加超时保护
-        with DDGS(timeout=10) as ddgs:
-            # 执行搜索，转换为 list 以兼容 generator
-            search_results = list(ddgs.text(query, max_results=num_results))
+        # 提取搜索结果
+        for result in data.get("results", [])[:num_results]:
+            title = result.get("title", "")
+            snippet = result.get("content", "") or result.get("snippet", "")
+            link = result.get("url", "")
             
-            if search_results:
-                for result in search_results:
-                    title = result.get("title", "")
-                    snippet = result.get("body", "") or result.get("snippet", "")
-                    link = result.get("href", "") or result.get("url", "")
-                    
-                    # 清洗和截断摘要
-                    snippet = _sanitize_snippet(snippet)
-                    
-                    results_list.append({
-                        "title": title[:200] if title else "",  # 限制标题长度
-                        "snippet": snippet,
-                        "link": link
-                    })
+            # 清洗和截断摘要
+            snippet = _sanitize_snippet(snippet)
+            
+            results_list.append({
+                "title": title[:200] if title else "",
+                "snippet": snippet,
+                "link": link
+            })
         
         results = {
             "status": "success",
             "query": query,
-            "source": "duckduckgo",
             "results_count": len(results_list),
             "results": results_list
         }
         
-        logger.info(f"DuckDuckGo search completed: found {len(results['results'])} results")
+        logger.info(f"searXNG search completed: found {len(results['results'])} results")
         return results
         
-    except ImportError:
-        logger.warning("duckduckgo-search not installed. Install with: pip install duckduckgo-search")
+    except requests.exceptions.Timeout:
+        error_msg = "Request timeout"
+        logger.error(f"searXNG search timeout: {error_msg}")
         return {
             "status": "failed",
-            "reason": "duckduckgo-search library not installed. Please run: pip install duckduckgo-search",
+            "reason": f"Search timeout after 10 seconds",
+            "query": query,
+            "results": []
+        }
+        
+    except requests.exceptions.ConnectionError as e:
+        error_msg = str(e)
+        logger.error(f"searXNG connection error: {error_msg}", exc_info=True)
+        return {
+            "status": "failed",
+            "reason": f"Connection error: Cannot reach searXNG server at {SEARCH_BASE_URL}",
+            "query": query,
+            "results": []
+        }
+        
+    except requests.exceptions.HTTPError as e:
+        error_msg = str(e)
+        logger.error(f"searXNG HTTP error: {error_msg}", exc_info=True)
+        return {
+            "status": "failed",
+            "reason": f"HTTP error: {response.status_code} - {error_msg}",
             "query": query,
             "results": []
         }
         
     except Exception as e:
         error_msg = str(e)
-        logger.error(f"DuckDuckGo search failed: {error_msg}", exc_info=True)
+        logger.error(f"searXNG search failed: {error_msg}", exc_info=True)
         return {
             "status": "failed",
             "reason": f"Search failed: {error_msg}",
