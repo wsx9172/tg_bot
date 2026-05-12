@@ -11,79 +11,80 @@ from system_tools import SYSTEM_TOOLS, SYSTEM_TOOL_SCHEMAS
 
 logger = logging.getLogger(__name__)
 
-
-def log_api_call(call_label="API Call"):
+def log_openai_api_call(call_label="API Call"):
     """
-    装饰器：记录 LLM API 调用的完整请求和响应日志
-    
-    Args:
-        call_label: 调用标签，用于区分不同的 API 调用（如 "1st call"、"2nd call"）
-    
-    Returns:
-        装饰后的函数，会自动记录请求和响应日志
+    通用 LLM API 调用日志装饰器（安全版）
+
+    只记录：
+    - 请求：model / messages长度 / tools数量 / tool_choice
+    - 响应：content / tool_calls数量 / token信息（如有）
+
+    不依赖任何 SDK 结构，避免 JSON 序列化错误
     """
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            # 提取关键参数用于日志
-            model = kwargs.get('model', args[0] if args else 'unknown')
-            messages = kwargs.get('messages', args[1] if len(args) > 1 else [])
-            tools = kwargs.get('tools', args[2] if len(args) > 2 else [])
-            tool_choice = kwargs.get('tool_choice', 'auto')
-            
-            # 构建并记录请求体
-            request_payload = {
-                "model": model,
-                "messages": messages,
-                "tools": tools,
+
+            # ========== 安全提取请求信息 ==========
+            model = kwargs.get("model") or (args[1] if len(args) > 1 else "unknown")
+            messages = kwargs.get("messages") or (args[2] if len(args) > 2 else [])
+            tools = kwargs.get("tools") or (args[3] if len(args) > 3 else [])
+            tool_choice = kwargs.get("tool_choice", "auto")
+            timeout = kwargs.get("timeout", 30)
+
+            request_summary = {
+                "label": call_label,
+                "model": str(model),
+                "messages_count": len(messages),
+                "tools_count": len(tools),
                 "tool_choice": tool_choice,
-                "timeout": kwargs.get('timeout', 30)
+                "timeout": timeout,
             }
-            logger.info(f"LLM Request ({call_label}):\n{json.dumps(request_payload, ensure_ascii=False, indent=2)}")
-            
-            # 执行原始函数调用
+
+            logger.info(f"LLM Request: {json.dumps(request_summary, ensure_ascii=False)}")
+
+            # ========== 调用 ==========
             try:
                 completion = func(*args, **kwargs)
-                
-                # 构建并记录响应体
-                response_data = {
-                    "id": getattr(completion, 'id', None),
-                    "created": getattr(completion, 'created', None),
-                    "model": getattr(completion, 'model', None),
-                    "choices": [
-                        {
-                            "index": choice.index,
-                            "message": {
-                                "role": choice.message.role,
-                                "content": choice.message.content,
-                                "tool_calls": [
-                                    {
-                                        "id": tc.id,
-                                        "type": tc.type,
-                                        "function": {
-                                            "name": tc.function.name,
-                                            "arguments": tc.function.arguments
-                                        }
-                                    } for tc in (choice.message.tool_calls or [])
-                                ]
-                            },
-                            "finish_reason": choice.finish_reason
-                        } for choice in completion.choices
-                    ],
-                    "usage": {
-                        "prompt_tokens": getattr(completion.usage, 'prompt_tokens', None) if hasattr(completion, 'usage') else None,
-                        "completion_tokens": getattr(completion.usage, 'completion_tokens', None) if hasattr(completion, 'usage') else None,
-                        "total_tokens": getattr(completion.usage, 'total_tokens', None) if hasattr(completion, 'usage') else None
-                    } if hasattr(completion, 'usage') else None
+
+                # ========== 安全提取响应 ==========
+                choices = getattr(completion, "choices", [])
+
+                response_summary = {
+                    "label": call_label,
+                    "choices_count": len(choices),
                 }
-                logger.info(f"LLM Response ({call_label}):\n{json.dumps(response_data, ensure_ascii=False, indent=2)}")
-                
+
+                # 提取第一个结果（通常够用）
+                if choices:
+                    msg = getattr(choices[0], "message", None)
+
+                    if msg:
+                        response_summary["content"] = getattr(msg, "content", None)
+
+                        tool_calls = getattr(msg, "tool_calls", None)
+                        if tool_calls:
+                            response_summary["tool_calls_count"] = len(tool_calls)
+                        else:
+                            response_summary["tool_calls_count"] = 0
+
+                # token信息（可选）
+                usage = getattr(completion, "usage", None)
+                if usage:
+                    response_summary["tokens"] = {
+                        "prompt": getattr(usage, "prompt_tokens", None),
+                        "completion": getattr(usage, "completion_tokens", None),
+                        "total": getattr(usage, "total_tokens", None),
+                    }
+
+                logger.info(f"LLM Response: {json.dumps(response_summary, ensure_ascii=False)}")
+
                 return completion
-                
+
             except Exception as e:
                 logger.error(f"LLM API call failed ({call_label}): {e}", exc_info=True)
                 raise
-        
+
         return wrapper
     return decorator
 
@@ -515,7 +516,7 @@ def _handle_tool_calls(tool_calls: List, messages: List[Dict]) -> List[Dict]:
     return messages
 
 
-@log_api_call(call_label="调用 LLM API")
+@log_openai_api_call()
 def _call_llm(client, model, messages, tools, tool_choice="auto"):
     """
     调用 LLM API
