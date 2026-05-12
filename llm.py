@@ -713,21 +713,37 @@ def ask_llm(
             if completion.choices[0].message.tool_calls:
                 logger.info(f"Round {round_num}: Model requested {len(completion.choices[0].message.tool_calls)} tool calls")
                 
-                # 执行所有工具调用并将结果添加到消息历史
-                messages = _handle_tool_calls(
-                    completion.choices[0].message.tool_calls,
-                    messages
-                )
-                
-                # 如果不是最后一轮，继续循环
-                if round_num < MAX_TOOL_CALL_ROUNDS:
+                # 如果是最后一轮且模型仍请求工具调用，执行工具后需要进行最终调用
+                if round_num == MAX_TOOL_CALL_ROUNDS:
+                    logger.warning(f"Reached max tool call rounds ({MAX_TOOL_CALL_ROUNDS}), executing tools and performing final call")
+                    
+                    # 执行工具调用
+                    messages = _handle_tool_calls(
+                        completion.choices[0].message.tool_calls,
+                        messages
+                    )
+                    
+                    # 添加强制指令，告诉模型已达到工具调用限制
+                    constraint_message = {
+                        "role": "system",
+                        "content": (
+                            f"Tool call limit reached ({MAX_TOOL_CALL_ROUNDS}). "
+                            "Stop calling tools and answer using only existing information."
+                        )
+                    }
+                    messages.append(constraint_message)
+                    
+                    # 进行最后一次无工具调用，让模型基于所有工具结果生成最终回复
+                    completion = _call_llm(client, model, messages, tools=tools, tool_choice="none")
+                    break
+                else:
+                    # 非最后一轮，执行工具后继续下一轮
+                    messages = _handle_tool_calls(
+                        completion.choices[0].message.tool_calls,
+                        messages
+                    )
                     logger.info(f"Round {round_num} completed, proceeding to next round...")
                     continue
-                else:
-                    # 达到最大轮次，强制禁止工具调用以获取最终回复
-                    logger.warning(f"Reached max tool call rounds ({MAX_TOOL_CALL_ROUNDS}), forcing final response")
-                    completion = _call_llm(client, model, messages, tools=[], tool_choice="none")
-                    break
             else:
                 # 没有工具调用，直接返回结果
                 logger.info(f"Round {round_num}: No tool calls, got final response")
