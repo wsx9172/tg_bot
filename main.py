@@ -317,3 +317,175 @@ async def ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logger.info(f"AI response generated for user={update.effective_user.username}, response length: {len(result)}")
     await reply_long_text(update.message, result)
+    
+async def msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """接收消息并保存到文件"""
+    if not auth(update):
+        logger.warning(f"Unauthorized /msg from user_id={update.effective_user.id if update.effective_user else 'unknown'}")
+        return
+    
+    # 获取用户输入
+    content = " ".join(context.args)
+    if not content:
+        await update.message.reply_text("用法：/msg <内容>\n例如：/msg this is a token")
+        return
+    
+    try:
+        # 生成文件名：msg_2024-12-14_10-30-45-123456_ab12cd34.txt
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
+        filename = f"msg_{timestamp}_{uuid.uuid4().hex[:8]}.txt"
+        filepath = os.path.join(MSG_DIR, filename)
+        
+        # 写入文件
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(content)
+        
+        # 返回成功信息
+        await update.message.reply_text(
+            f"✅ 消息已保存\n\n"
+            f"文件: {filename}\n"
+            f"内容: {content}"
+        )
+        
+        logger.info(f"Message saved: {filepath} by user={update.effective_user.username}")
+    
+    except Exception as e:
+        await update.message.reply_text(f"❌ 保存失败: {e}")
+        logger.error(f"Failed to save message: {e}", exc_info=True)
+
+# =========================
+# 告警
+# =========================
+async def alert_loop(app):
+    loop = asyncio.get_event_loop()
+    while True:
+        try:
+            # ✅ 在线程池中执行CPU密集操作
+            alerts = await loop.run_in_executor(executor, check_alerts)
+            if alerts:
+                logger.warning(f"Alerts triggered: {len(alerts)} alerts")
+                tasks = [
+                    app.bot.send_message(uid, "\n".join(alerts))
+                    for uid in ALLOWED_USERS
+                ]
+                await asyncio.gather(*tasks)
+        except asyncio.CancelledError:
+            logger.info("alert loop cancelled")
+            raise
+        except Exception:
+            logger.exception("alert loop error")
+        
+        await asyncio.sleep(60)
+
+async def post_init(app):
+    app.bot_data["alert_task"] = asyncio.create_task(alert_loop(app))
+
+
+async def post_shutdown(app):
+    task = app.bot_data.pop("alert_task", None)
+    if task:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    executor.shutdown(wait=False, cancel_futures=True)
+
+
+# =========================
+# main
+# =========================
+
+def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+
+    logger.info("=" * 50)
+    logger.info("Bot starting...")
+    logger.info(f"BOT_MODE: {BOT_MODE}")
+    logger.info(f"CHAT_PLATFORM: {CHAT_PLATFORM}")
+    logger.info(f"BOT_INSTANCE_ID: {BOT_INSTANCE_ID}")
+    logger.info(f"NODE_ID: {NODE_ID}")
+    logger.info(f"ALLOWED_USERS: {ALLOWED_USERS}")
+    logger.info(f"LOG_LEVEL: {os.getenv('LOG_LEVEL', 'INFO')}")
+    logger.info(f"LOG_SQL: {os.getenv('LOG_SQL', 'false')}")
+    logger.info("=" * 50)
+
+    if not BOT_TOKEN:
+        logger.error("TELEGRAM_BOT_TOKEN / BOT_TOKEN missing")
+        sys.exit(1)
+
+    if BOT_MODE not in {"webhook", "polling"}:
+        logger.error("BOT_MODE must be webhook or polling, got %s", BOT_MODE)
+        sys.exit(1)
+
+    if BOT_MODE == "webhook":
+        if not WEBHOOK_DOMAIN:
+            logger.error("WEBHOOK_DOMAIN missing")
+            sys.exit(1)
+
+        if not WEBHOOK_URL_PATH:
+            logger.error("WEBHOOK_URL_PATH missing")
+            sys.exit(1)
+
+    try:
+        if not bot_instance_exists(BOT_INSTANCE_ID):
+            logger.warning(
+                "BOT_INSTANCE_ID=%s missing or disabled in bot_instance; "
+                "run init.sql or insert a bot_instance row so audit and allowlists align",
+                BOT_INSTANCE_ID,
+            )
+    except pymysql.err.OperationalError as e:
+        logger.error(
+            "无法连接 MySQL（%s）。请确认 mysqld 已启动，且 .env 中 "
+            "MYSQL_HOST / MYSQL_PORT / MYSQL_USER / MYSQL_PASSWORD / MYSQL_DATABASE 正确。",
+            e,
+        )
+        sys.exit(1)
+
+    try:
+        app = (
+            Application.builder()
+            .token(BOT_TOKEN)
+            .post_init(post_init)
+            .post_shutdown(post_shutdown)
+            .build()
+        )
+
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CommandHandler("cmd", cmd))
+        app.add_handler(CommandHandler("status", status))
+        app.add_handler(CommandHandler("ai", ai))
+        app.add_handler(CommandHandler("msg", msg))
+
+        app.add_handler(CallbackQueryHandler(button_handler))
+
+        if BOT_MODE == "polling":
+            logger.info("Bot initialized; polling started")
+            app.run_polling()
+        else:
+            webhook_url = f"https://{WEBHOOK_DOMAIN}/{WEBHOOK_URL_PATH}"
+
+            logger.info(
+                "Bot initialized; webhook starting on %s:%s -> %s",
+                WEBHOOK_LISTEN,
+                WEBHOOK_PORT,
+                webhook_url,
+            )
+
+            app.run_webhook(
+                listen=WEBHOOK_LISTEN,
+                port=WEBHOOK_PORT,
+                url_path=WEBHOOK_URL_PATH,
+                webhook_url=webhook_url,
+                secret_token=WEBHOOK_SECRET_TOKEN,
+            )
+
+    except Exception:
+        logger.exception("fatal error starting bot")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
