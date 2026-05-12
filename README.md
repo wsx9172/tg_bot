@@ -69,6 +69,9 @@ MYSQL_DATABASE=telegram_bot
 # 日志配置（新增）
 LOG_LEVEL=INFO
 LOG_SQL=false
+
+# LLM 搜索功能配置（新增）
+ENABLE_SEARCH=true
 ```
 
 `BOT_MODE` 可选：
@@ -77,6 +80,54 @@ LOG_SQL=false
 - `polling`：主动轮询 Telegram 更新，适合本地开发或没有公网 HTTPS 域名的环境。
 
 `WEBHOOK_URL_PATH` 建议使用随机字符串，不需要前导 `/`。如果留空，程序会默认使用 `TELEGRAM_BOT_TOKEN` 作为路径。
+
+### LLM 搜索功能说明
+
+项目支持 AI 助手调用网络搜索工具，获取实时信息和技术文档。
+
+#### ENABLE_SEARCH
+
+是否启用搜索功能：
+
+- `true` 或 `1` 或 `yes`：启用搜索功能（默认）
+- `false` 或其他值：禁用搜索功能
+
+示例：
+```env
+ENABLE_SEARCH=true
+```
+
+#### 搜索引擎
+
+项目使用 **DuckDuckGo Search** 作为搜索引擎：
+
+- ✅ **完全免费**：无需 API Key
+- ✅ **隐私保护**：不追踪用户
+- ✅ **易于使用**：安装依赖即可使用
+- ⚠️ **注意**：有速率限制，建议合理设置搜索频率
+
+安装依赖：
+```bash
+pip install duckduckgo-search
+```
+
+或使用 requirements.txt：
+```bash
+pip install -r requirements.txt
+```
+
+#### 工作原理
+
+1. **智能判断**：模型会自动判断是否需要搜索（例如询问最新技术、实时信息等）
+2. **工具调用**：如果需要搜索，模型会调用 `web_search` 工具
+3. **执行搜索**：系统通过 DuckDuckGo 执行网络搜索并获取结果
+4. **生成回答**：模型结合搜索结果生成最终回答
+
+示例对话：
+```
+用户：Kubernetes 最新版本有什么新特性？
+AI：[调用搜索工具] → [获取最新信息] → [生成回答]
+```
 
 ### 日志配置说明
 

@@ -114,3 +114,6 @@ OPENAI_API_URL = os.getenv(
     "OPENAI_API_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"
 )
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "deepseek-v4-pro")
+
+# LLM 搜索功能配置
+ENABLE_SEARCH = os.getenv("ENABLE_SEARCH", "true").lower() in ("true", "1", "yes")
