@@ -1,10 +1,15 @@
+import logging
 from db import get_conn
+
+logger = logging.getLogger(__name__)
 
 
 def get_command_script(platform, bot_instance_id, command):
     """
     白名单解析：优先匹配 (platform, bot_instance_id)，回退到 (*, 0)。
     """
+    logger.debug(f"Looking up command script: platform={platform}, bot_instance_id={bot_instance_id}, command={command}")
+    
     conn = get_conn()
 
     try:
@@ -23,7 +28,13 @@ def get_command_script(platform, bot_instance_id, command):
                 (command, platform, bot_instance_id, platform, bot_instance_id),
             )
             row = cur.fetchone()
-            return row[0] if row else None
+            
+            if row:
+                logger.debug(f"Command {command} found with script: {row[0]}")
+                return row[0]
+            else:
+                logger.warning(f"Command {command} not found in allow list")
+                return None
 
     finally:
         conn.close()

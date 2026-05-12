@@ -14,6 +14,7 @@
 - `/msg` 保存消息到本地文件
 - 定时系统告警推送
 - MySQL 初始化与审计数据存储
+- **完整的日志系统**：支持 SQL 日志和业务日志，方便调试和问题排查
 
 ## 环境要求
 
@@ -64,6 +65,10 @@ MYSQL_PORT=3306
 MYSQL_USER=你的数据库用户
 MYSQL_PASSWORD=你的数据库密码
 MYSQL_DATABASE=telegram_bot
+
+# 日志配置（新增）
+LOG_LEVEL=INFO
+LOG_SQL=false
 ```
 
 `BOT_MODE` 可选：
@@ -72,6 +77,56 @@ MYSQL_DATABASE=telegram_bot
 - `polling`：主动轮询 Telegram 更新，适合本地开发或没有公网 HTTPS 域名的环境。
 
 `WEBHOOK_URL_PATH` 建议使用随机字符串，不需要前导 `/`。如果留空，程序会默认使用 `TELEGRAM_BOT_TOKEN` 作为路径。
+
+### 日志配置说明
+
+项目内置了完整的日志系统，可以通过环境变量进行配置：
+
+#### LOG_LEVEL
+
+控制日志输出级别，可选值：
+
+- `DEBUG`：最详细的日志，包括所有 SQL 语句、参数、内部状态等
+- `INFO`：关键业务流程日志（推荐生产环境使用）
+- `WARNING`：只记录警告和错误
+- `ERROR`：只记录错误
+
+示例：
+```env
+LOG_LEVEL=DEBUG
+```
+
+#### LOG_SQL
+
+是否启用 SQL 日志，记录所有数据库操作：
+
+- `true` 或 `1` 或 `yes`：启用 SQL 日志
+- `false` 或其他值：禁用 SQL 日志
+
+示例：
+```env
+LOG_SQL=true
+```
+
+启用后，所有 SQL 语句和参数都会以以下格式输出：
+```
+2024-01-15 10:30:45 - SQL - DEBUG - SQL: SELECT 1 FROM node WHERE id=%s LIMIT 1 | Params: (1,)
+```
+
+#### 日志格式
+
+所有日志统一格式：
+```
+YYYY-MM-DD HH:MM:SS - 模块名 - 级别 - 消息内容
+```
+
+示例输出：
+```
+2024-01-15 10:30:45 - main - INFO - User admin (ID: 123456) started bot
+2024-01-15 10:30:45 - sql - DEBUG - SQL: SELECT id FROM `user` WHERE platform=%s AND external_user_id=%s | Params: ('telegram', '123456')
+2024-01-15 10:30:45 - executor - INFO - Executing command: uptime by user=admin
+2024-01-15 10:30:45 - monitor - WARNING - Alert triggered: CPU high 92%
+```
 
 ## 初始化
 
@@ -148,6 +203,43 @@ bot.risun.wang {
 /msg 保存一段文本
 ```
 
+## 调试技巧
+
+### 开启详细日志
+
+在 `.env` 文件中设置：
+
+```env
+LOG_LEVEL=DEBUG
+LOG_SQL=true
+```
+
+重启 bot 后，你将看到：
+- 所有用户的操作记录
+- 所有数据库查询和更新
+- 所有命令执行过程
+- 所有 API 调用详情
+
+### 查看特定模块日志
+
+如果需要查看特定模块的日志，可以在代码中调整对应 logger 的级别。例如只看数据库操作：
+
+```python
+import logging
+logging.getLogger('sql').setLevel(logging.DEBUG)
+```
+
+### 日志文件输出（可选）
+
+如果需要将日志保存到文件，可以修改 `config.py` 中的日志配置，添加 FileHandler：
+
+```python
+file_handler = logging.FileHandler('bot.log', encoding='utf-8')
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT))
+logging.getLogger().addHandler(file_handler)
+```
+
 ## 常见问题
 
 如果 polling 模式收不到消息，执行：
@@ -166,3 +258,5 @@ python setup_bot.py --skip-db
 - `WEBHOOK_DOMAIN`、`WEBHOOK_URL_PATH` 和 Telegram webhook 注册信息是否一致
 - `ALLOWED_USERS` 是否包含你的 Telegram 用户 ID
 - MySQL 连接配置是否正确
+
+如果遇到问题，首先检查日志输出，大多数问题都能在日志中找到原因。

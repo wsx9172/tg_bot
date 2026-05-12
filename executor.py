@@ -1,5 +1,6 @@
 import shlex
 import subprocess
+import logging
 
 from db import (
     bot_instance_exists,
@@ -7,6 +8,8 @@ from db import (
     user_can_access_node,
 )
 from router import get_command_script
+
+logger = logging.getLogger(__name__)
 
 
 def run_command(
@@ -18,7 +21,10 @@ def run_command(
     command,
     extra_args=None,
 ):
+    logger.info(f"Running command: {command} for user={user_db_id}, node={node_id}")
+    
     if not bot_instance_exists(bot_id):
+        logger.warning(f"Command rejected: invalid bot instance {bot_id}")
         log_command(
             user_db_id,
             channel_db_id,
@@ -32,6 +38,7 @@ def run_command(
         return "❌ bot instance not configured"
 
     if not user_can_access_node(user_db_id, node_id):
+        logger.warning(f"Command rejected: user {user_db_id} has no permission for node {node_id}")
         log_command(
             user_db_id,
             channel_db_id,
@@ -46,6 +53,7 @@ def run_command(
 
     script = get_command_script(platform, bot_id, command)
     if not script:
+        logger.warning(f"Command rejected: {command} not allowed")
         log_command(
             user_db_id,
             channel_db_id,
@@ -58,6 +66,7 @@ def run_command(
         )
         return "❌ command not allowed"
 
+    logger.debug(f"Executing script: {script}")
     try:
         args = shlex.split(script)
         result = subprocess.check_output(
@@ -67,6 +76,7 @@ def run_command(
             timeout=20,
             stderr=subprocess.STDOUT,
         )
+        logger.info(f"Command {command} executed successfully, output length: {len(result)}")
         log_command(
             user_db_id,
             channel_db_id,
@@ -79,6 +89,7 @@ def run_command(
         )
         return result
     except subprocess.TimeoutExpired:
+        logger.error(f"Command {command} timed out after 20s")
         log_command(
             user_db_id,
             channel_db_id,
@@ -91,6 +102,7 @@ def run_command(
         )
         return "❌ Command timeout (20s)"
     except Exception as e:
+        logger.error(f"Command {command} failed: {e}", exc_info=True)
         log_command(
             user_db_id,
             channel_db_id,

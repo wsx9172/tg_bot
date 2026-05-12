@@ -10,7 +10,7 @@ MEMORY_TURNS = 6
 MAX_HISTORY_TEXT_LENGTH = 2000
 
 SYSTEM_PROMPT = """
-你是一个面向 Linux 运维和 ChatOps 场景的助手。
+你是一个面向 Linux 运维的ChatOps助手。
 
 你的职责：
 - 帮助用户分析系统状态、日志、命令输出、告警和运维问题。
@@ -58,6 +58,7 @@ def _build_messages(user_id, channel_id, bot_instance_id, prompt):
             bot_instance_id,
             limit=MEMORY_TURNS,
         )
+        logger.debug(f"Loaded {len(history)} history messages for user={user_id}")
     except Exception:
         logger.warning("failed to load llm history", exc_info=True)
         history = []
@@ -69,6 +70,7 @@ def _build_messages(user_id, channel_id, bot_instance_id, prompt):
             messages.append({"role": "assistant", "content": _trim_text(old_response)})
 
     messages.append({"role": "user", "content": prompt})
+    logger.debug(f"Built messages with {len(messages)} turns for user={user_id}")
     return messages
 
 
@@ -80,14 +82,19 @@ def ask_llm(
     config,
     prompt,
 ):
+    logger.info(f"LLM request started: user={user_id}, provider={provider_id}, prompt_len={len(prompt)}")
+    
     try:
         api_key = _config_value(config, "api_key", "OPENAI_API_KEY")
         api_url = _config_value(config, "api_url", "OPENAI_API_URL")
         model = _config_value(config, "model", "OPENAI_MODEL", default="deepseek-v4-pro")
 
         if not api_key:
+            logger.error("LLM Error: missing api_key")
             return "LLM Error: missing api_key"
 
+        logger.debug(f"Calling LLM API: model={model}, base_url={_normalize_base_url(api_url)}")
+        
         client = OpenAI(
             api_key=api_key,
             base_url=_normalize_base_url(api_url),
@@ -100,8 +107,10 @@ def ask_llm(
         )
 
         result = completion.choices[0].message.content
+        logger.info(f"LLM response received: user={user_id}, response_len={len(result)}")
 
         if not result:
+            logger.warning("Empty response from API")
             return "Empty response from API"
 
         try:
@@ -119,5 +128,5 @@ def ask_llm(
         return result
 
     except Exception as e:
-        logger.exception("llm request failed")
+        logger.exception(f"llm request failed: user={user_id}, error={e}")
         return f"LLM Error: {str(e)}"

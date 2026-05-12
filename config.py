@@ -1,5 +1,6 @@
 import os
 import warnings
+import logging
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -21,6 +22,46 @@ def _int_env(name: str, default: int) -> int:
     if raw is None or str(raw).strip() == "":
         return default
     return int(raw)
+
+
+# =========================
+# 日志配置
+# =========================
+
+# 日志级别配置（可通过环境变量覆盖）
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+LOG_SQL = os.getenv("LOG_SQL", "false").lower() in ("true", "1", "yes")
+LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+# 配置根日志记录器
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format=LOG_FORMAT,
+    datefmt=LOG_DATE_FORMAT,
+)
+
+# 如果启用 SQL 日志，配置 pymysql 的日志
+if LOG_SQL:
+    # 设置 pymysql 日志级别为 DEBUG 以捕获所有 SQL
+    logging.getLogger('pymysql').setLevel(logging.DEBUG)
+    
+    # 创建自定义 handler 来格式化 SQL 日志
+    sql_logger = logging.getLogger('sql')
+    sql_logger.setLevel(logging.DEBUG)
+    
+    # 防止日志重复
+    sql_logger.propagate = False
+    
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.DEBUG)
+    console_handler.setFormatter(
+        logging.Formatter(
+            '%(asctime)s - SQL - %(levelname)s - %(message)s',
+            datefmt=LOG_DATE_FORMAT
+        )
+    )
+    sql_logger.addHandler(console_handler)
 
 
 # Telegram（支持 TELEGRAM_BOT_TOKEN 或兼容别名 BOT_TOKEN）

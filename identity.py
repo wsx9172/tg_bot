@@ -1,4 +1,7 @@
+import logging
 from db import get_conn
+
+logger = logging.getLogger(__name__)
 
 
 # =========================
@@ -6,6 +9,8 @@ from db import get_conn
 # =========================
 
 def get_or_create_user(platform, external_user_id, name=None):
+    logger.debug(f"Getting or creating user: platform={platform}, external_user_id={external_user_id}")
+    
     conn = get_conn()
 
     try:
@@ -18,6 +23,7 @@ def get_or_create_user(platform, external_user_id, name=None):
             row = cur.fetchone()
 
             if row:
+                logger.debug(f"User found: id={row[0]}")
                 return row[0]
 
             cur.execute("""
@@ -26,7 +32,9 @@ def get_or_create_user(platform, external_user_id, name=None):
             """, (platform, str(external_user_id), name))
 
             conn.commit()
-            return cur.lastrowid
+            user_id = cur.lastrowid
+            logger.info(f"New user created: id={user_id}, platform={platform}, external_user_id={external_user_id}")
+            return user_id
 
     finally:
         conn.close()
@@ -37,6 +45,8 @@ def get_or_create_user(platform, external_user_id, name=None):
 # =========================
 
 def get_or_create_channel(platform, external_id, name=None):
+    logger.debug(f"Getting or creating channel: platform={platform}, external_id={external_id}")
+    
     conn = get_conn()
 
     try:
@@ -49,6 +59,7 @@ def get_or_create_channel(platform, external_id, name=None):
             row = cur.fetchone()
 
             if row:
+                logger.debug(f"Channel found: id={row[0]}")
                 return row[0]
 
             cur.execute("""
@@ -57,7 +68,9 @@ def get_or_create_channel(platform, external_id, name=None):
             """, (platform, str(external_id), name))
 
             conn.commit()
-            return cur.lastrowid
+            channel_id = cur.lastrowid
+            logger.info(f"New channel created: id={channel_id}, platform={platform}, external_id={external_id}")
+            return channel_id
 
     finally:
         conn.close()
