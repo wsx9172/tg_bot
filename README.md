@@ -10,7 +10,7 @@
 - 用户白名单校验
 - `/status` 查看 CPU、内存、磁盘状态
 - `/cmd` 执行预置运维命令
-- `/ai` 调用大模型问答
+- `/ai` 调用大模型问答（支持实时搜索和系统信息查询）
 - `/msg` 保存消息到本地文件
 - 定时系统告警推送
 - MySQL 初始化与审计数据存储
@@ -21,7 +21,7 @@
 - Python 3.10+
 - MySQL 8.x 或兼容版本
 - Telegram Bot Token
-- webhook 模式需要 HTTPS 域名和反向代理，例如 Caddy 或 Nginx
+- webhook 模式需要 HTTPS 域名和反向代理（Caddy 或 Nginx）
 
 ## 安装
 
@@ -54,7 +54,7 @@ TELEGRAM_BOT_TOKEN=你的 Telegram Bot Token
 BOT_MODE=webhook
 ALLOWED_USERS=你的 Telegram 用户 ID
 
-WEBHOOK_DOMAIN=bot.risun.wang
+WEBHOOK_DOMAIN=bot.domain.com
 WEBHOOK_LISTEN=0.0.0.0
 WEBHOOK_PORT=33333
 WEBHOOK_URL_PATH=tg_webhook_xxx
@@ -66,18 +66,16 @@ MYSQL_USER=你的数据库用户
 MYSQL_PASSWORD=你的数据库密码
 MYSQL_DATABASE=telegram_bot
 
-# 日志配置（新增）
 LOG_LEVEL=INFO
 LOG_SQL=false
 
-# LLM 搜索功能配置（新增）
 ENABLE_SEARCH=true
 ```
 
 `BOT_MODE` 可选：
 
-- `webhook`：通过 HTTPS webhook 接收 Telegram 更新，适合服务器部署。
-- `polling`：主动轮询 Telegram 更新，适合本地开发或没有公网 HTTPS 域名的环境。
+- `webhook`：通过 HTTPS webhook 接收 Telegram 更新，适合服务器部署
+- `polling`：主动轮询 Telegram 更新，适合本地开发或没有公网 HTTPS 域名的环境
 
 `WEBHOOK_URL_PATH` 建议使用随机字符串，不需要前导 `/`。如果留空，程序会默认使用 `TELEGRAM_BOT_TOKEN` 作为路径。
 
@@ -97,36 +95,22 @@ ENABLE_SEARCH=true
 ENABLE_SEARCH=true
 ```
 
-#### 搜索引擎
+#### search engine_BASE_URL
 
-项目使用 **DuckDuckGo Search** 作为搜索引擎：
-
-- ✅ **完全免费**：无需 API Key
-- ✅ **隐私保护**：不追踪用户
-- ✅ **易于使用**：安装依赖即可使用
-- ⚠️ **注意**：有速率限制，建议合理设置搜索频率
-
-安装依赖：
-```bash
-pip install duckduckgo-search
-```
-
-或使用 requirements.txt：
-```bash
-pip install -r requirements.txt
-```
+search engine 搜索引擎地址。
 
 #### 工作原理
 
 1. **智能判断**：模型会自动判断是否需要搜索（例如询问最新技术、实时信息等）
-2. **工具调用**：如果需要搜索，模型会调用 `web_search` 工具
-3. **执行搜索**：系统通过 DuckDuckGo 执行网络搜索并获取结果
+2. **多轮工具调用**：最多支持 3 轮工具调用，确保获取充分信息
+3. **执行搜索**：系统通过 search engine 执行网络搜索并获取结果
 4. **生成回答**：模型结合搜索结果生成最终回答
 
 示例对话：
 ```
 用户：Kubernetes 最新版本有什么新特性？
-AI：[调用搜索工具] → [获取最新信息] → [生成回答]
+AI：[第1轮] 调用 web_search → [获取搜索结果]
+    [第2轮] 综合信息 → [生成详细回答]
 ```
 
 ### 日志配置说明
@@ -281,14 +265,6 @@ python main.py
 ```
 
 生产环境建议用 systemd 托管 bot 进程，并用 Caddy 或 Nginx 在宿主机上提供 HTTPS，反向代理到 `127.0.0.1:33333`。
-
-Caddy 示例：
-
-```caddyfile
-bot.risun.wang {
-    reverse_proxy 127.0.0.1:33333
-}
-```
 
 ## 使用
 

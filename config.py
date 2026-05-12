@@ -1,5 +1,4 @@
 import os
-import warnings
 import logging
 from pathlib import Path
 
@@ -9,10 +8,9 @@ from dotenv import load_dotenv
 _ROOT = Path(__file__).resolve().parent
 _ENV_FILE = _ROOT / ".env"
 if not _ENV_FILE.is_file():
-    warnings.warn(
-        f"未找到 {_ENV_FILE}（当前工作目录 {os.getcwd()}）。"
-        f"请把 .env 放在与 config.py 同级目录，或复制 .env.example 为 .env。",
-        stacklevel=1,
+    print(
+        f"警告: 未找到 {_ENV_FILE}（当前工作目录 {os.getcwd()}）。"
+        f"请把 .env 放在与 config.py 同级目录，或复制 .env.example 为 .env。"
     )
 load_dotenv(dotenv_path=_ENV_FILE, encoding="utf-8")
 
@@ -167,5 +165,5 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "deepseek-v4-pro")
 # LLM 搜索功能配置
 ENABLE_SEARCH = os.getenv("ENABLE_SEARCH", "true").lower() in ("true", "1", "yes")
 
-# searXNG 搜索引擎配置
+# search engine 搜索引擎配置
 SEARCH_BASE_URL = os.getenv("SEARCH_BASE_URL").strip().rstrip("/")
