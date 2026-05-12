@@ -13,13 +13,119 @@ _pool_lock = threading.Lock()
 sql_logger = logging.getLogger('sql')
 
 
-def _log_sql(sql, params=None):
-    """记录 SQL 语句和参数"""
-    if LOG_SQL:
-        if params:
-            sql_logger.debug(f"SQL: {sql} | Params: {params}")
-        else:
-            sql_logger.debug(f"SQL: {sql}")
+class LoggedConnection:
+    """包装数据库连接，自动记录所有 SQL 操作"""
+    
+    def __init__(self, conn):
+        self._conn = conn
+    
+    def cursor(self, *args, **kwargs):
+        """返回包装后的 cursor"""
+        raw_cursor = self._conn.cursor(*args, **kwargs)
+        return LoggedCursor(raw_cursor)
+    
+    def commit(self):
+        result = self._conn.commit()
+        sql_logger.debug("Transaction committed")
+        return result
+    
+    def rollback(self):
+        result = self._conn.rollback()
+        sql_logger.warning("Transaction rolled back")
+        return result
+    
+    def close(self):
+        sql_logger.debug("Database connection closed")
+        return self._conn.close()
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+
+
+class LoggedCursor:
+    """包装数据库游标，自动记录所有 SQL 执行"""
+    
+    def __init__(self, cursor):
+        self._cursor = cursor
+    
+    def execute(self, query, args=None):
+        """执行 SQL 并记录日志"""
+        if LOG_SQL:
+            # 格式化 SQL 用于日志
+            if args:
+                # 尝试将参数替换到 SQL 中（仅用于日志显示）
+                try:
+                    formatted_query = query % tuple(args) if isinstance(args, (tuple, list)) else query % args
+                    sql_logger.debug(f"SQL: {formatted_query}")
+                except:
+                    sql_logger.debug(f"SQL: {query} | Params: {args}")
+            else:
+                sql_logger.debug(f"SQL: {query}")
+        
+        try:
+            result = self._cursor.execute(query, args)
+            return result
+        except Exception as e:
+            if LOG_SQL:
+                sql_logger.error(f"SQL Error: {e} | Query: {query[:200]}")
+            raise
+    
+    def executemany(self, query, args_list):
+        """批量执行 SQL 并记录日志"""
+        if LOG_SQL:
+            sql_logger.debug(f"SQL (batch): {query[:200]} | Count: {len(args_list)}")
+        
+        try:
+            result = self._cursor.executemany(query, args_list)
+            return result
+        except Exception as e:
+            if LOG_SQL:
+                sql_logger.error(f"SQL Error: {e} | Query: {query[:200]}")
+            raise
+    
+    def fetchone(self):
+        result = self._cursor.fetchone()
+        if LOG_SQL:
+            sql_logger.debug(f"Fetch one: {result}")
+        return result
+    
+    def fetchall(self):
+        result = self._cursor.fetchall()
+        if LOG_SQL:
+            sql_logger.debug(f"Fetch all: {len(result)} rows")
+        return result
+    
+    def fetchmany(self, size=None):
+        result = self._cursor.fetchmany(size)
+        if LOG_SQL:
+            sql_logger.debug(f"Fetch many: {len(result)} rows")
+        return result
+    
+    @property
+    def lastrowid(self):
+        return self._cursor.lastrowid
+    
+    @property
+    def rowcount(self):
+        return self._cursor.rowcount
+    
+    def close(self):
+        return self._cursor.close()
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+    
+    def __getattr__(self, name):
+        """代理其他属性到原始 cursor"""
+        return getattr(self._cursor, name)
 
 
 def _get_pool():
@@ -44,13 +150,13 @@ def _get_pool():
 
 
 def get_conn():
-    conn = _get_pool().connection()
+    """获取包装后的数据库连接，自动记录所有 SQL"""
+    raw_conn = _get_pool().connection()
     sql_logger.debug("Database connection acquired from pool")
-    return conn
+    return LoggedConnection(raw_conn)
 
 
 def node_exists(node_id):
-    _log_sql("SELECT 1 FROM node WHERE id=%s LIMIT 1", (node_id,))
     conn = get_conn()
     try:
         with conn.cursor() as cur:
@@ -63,10 +169,6 @@ def node_exists(node_id):
 
 
 def bot_instance_exists(bot_id):
-    _log_sql(
-        "SELECT 1 FROM bot_instance WHERE id=%s AND enabled=1 LIMIT 1",
-        (bot_id,),
-    )
     conn = get_conn()
     try:
         with conn.cursor() as cur:
@@ -89,7 +191,6 @@ def user_can_access_node(user_db_id, node_id):
     if not node_exists(node_id):
         return False
     
-    _log_sql("SELECT role FROM `user` WHERE id=%s LIMIT 1", (user_db_id,))
     conn = get_conn()
     try:
         with conn.cursor() as cur:
@@ -125,11 +226,6 @@ def log_command(
     if args is not None:
         args_str = json.dumps(args, ensure_ascii=False)
     
-    _log_sql(
-        "INSERT INTO command_log ... VALUES (%s,%s,%s,%s,%s,%s,%s,%s,NOW(6))",
-        (user_id, channel_id, bot_id, node_id, command, args_str, status, result),
-    )
-    
     conn = get_conn()
     try:
         with conn.cursor() as cur:
@@ -160,11 +256,6 @@ def log_command(
 
 
 def log_status(node_id, cpu, memory, disk):
-    _log_sql(
-        "INSERT INTO status_log ... VALUES (%s,%s,%s,%s,NOW(6))",
-        (node_id, cpu, memory, disk),
-    )
-    
     conn = get_conn()
     try:
         with conn.cursor() as cur:
@@ -186,11 +277,6 @@ def log_status(node_id, cpu, memory, disk):
 
 
 def log_alert(node_id, level, alert_type, message):
-    _log_sql(
-        "INSERT INTO alert_log ... VALUES (%s,%s,%s,%s,NOW(6))",
-        (node_id, level, alert_type, message),
-    )
-    
     conn = get_conn()
     try:
         with conn.cursor() as cur:
@@ -212,11 +298,6 @@ def log_alert(node_id, level, alert_type, message):
 
 
 def log_llm(user_id, channel_id, bot_instance_id, provider_id, prompt, response):
-    _log_sql(
-        "INSERT INTO llm_log ... VALUES (%s,%s,%s,%s,%s,%s,NOW(6))",
-        (user_id, channel_id, bot_instance_id, provider_id, prompt[:50] + "...", response[:50] + "..."),
-    )
-    
     conn = get_conn()
     try:
         with conn.cursor() as cur:
@@ -238,11 +319,6 @@ def log_llm(user_id, channel_id, bot_instance_id, provider_id, prompt, response)
 
 
 def get_recent_llm_messages(user_id, channel_id, bot_instance_id, limit=6):
-    _log_sql(
-        "SELECT prompt, response FROM llm_log WHERE user_id=%s AND channel_id=%s AND bot_instance_id=%s ORDER BY created_at DESC LIMIT %s",
-        (user_id, channel_id, bot_instance_id, limit),
-    )
-    
     conn = get_conn()
     try:
         with conn.cursor() as cur:
@@ -266,11 +342,6 @@ def get_recent_llm_messages(user_id, channel_id, bot_instance_id, limit=6):
 
 
 def mark_chat_first_seen(platform, external_chat_id, external_user_id):
-    _log_sql(
-        "INSERT IGNORE INTO chat_state ... VALUES (%s,%s,%s,NOW(6))",
-        (platform, str(external_chat_id), str(external_user_id)),
-    )
-    
     conn = get_conn()
     try:
         with conn.cursor() as cur:
@@ -292,11 +363,6 @@ def mark_chat_first_seen(platform, external_chat_id, external_user_id):
 
 
 def is_new_chat(platform, external_chat_id):
-    _log_sql(
-        "SELECT 1 FROM chat_state WHERE platform=%s AND external_chat_id=%s LIMIT 1",
-        (platform, str(external_chat_id)),
-    )
-    
     conn = get_conn()
     try:
         with conn.cursor() as cur:
