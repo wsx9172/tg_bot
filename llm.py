@@ -3,12 +3,90 @@ import os
 import json
 from typing import Dict, List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import wraps
 from openai import OpenAI
 
 from db import get_recent_llm_messages, log_llm
 from system_tools import SYSTEM_TOOLS, SYSTEM_TOOL_SCHEMAS
 
 logger = logging.getLogger(__name__)
+
+
+def log_api_call(call_label="API Call"):
+    """
+    装饰器：记录 LLM API 调用的完整请求和响应日志
+    
+    Args:
+        call_label: 调用标签，用于区分不同的 API 调用（如 "1st call"、"2nd call"）
+    
+    Returns:
+        装饰后的函数，会自动记录请求和响应日志
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            # 提取关键参数用于日志
+            model = kwargs.get('model', args[0] if args else 'unknown')
+            messages = kwargs.get('messages', args[1] if len(args) > 1 else [])
+            tools = kwargs.get('tools', args[2] if len(args) > 2 else [])
+            tool_choice = kwargs.get('tool_choice', 'auto')
+            
+            # 构建并记录请求体
+            request_payload = {
+                "model": model,
+                "messages": messages,
+                "tools": tools,
+                "tool_choice": tool_choice,
+                "timeout": kwargs.get('timeout', 30)
+            }
+            logger.info(f"LLM Request ({call_label}):\n{json.dumps(request_payload, ensure_ascii=False, indent=2)}")
+            
+            # 执行原始函数调用
+            try:
+                completion = func(*args, **kwargs)
+                
+                # 构建并记录响应体
+                response_data = {
+                    "id": getattr(completion, 'id', None),
+                    "created": getattr(completion, 'created', None),
+                    "model": getattr(completion, 'model', None),
+                    "choices": [
+                        {
+                            "index": choice.index,
+                            "message": {
+                                "role": choice.message.role,
+                                "content": choice.message.content,
+                                "tool_calls": [
+                                    {
+                                        "id": tc.id,
+                                        "type": tc.type,
+                                        "function": {
+                                            "name": tc.function.name,
+                                            "arguments": tc.function.arguments
+                                        }
+                                    } for tc in (choice.message.tool_calls or [])
+                                ]
+                            },
+                            "finish_reason": choice.finish_reason
+                        } for choice in completion.choices
+                    ],
+                    "usage": {
+                        "prompt_tokens": getattr(completion.usage, 'prompt_tokens', None) if hasattr(completion, 'usage') else None,
+                        "completion_tokens": getattr(completion.usage, 'completion_tokens', None) if hasattr(completion, 'usage') else None,
+                        "total_tokens": getattr(completion.usage, 'total_tokens', None) if hasattr(completion, 'usage') else None
+                    } if hasattr(completion, 'usage') else None
+                }
+                logger.info(f"LLM Response ({call_label}):\n{json.dumps(response_data, ensure_ascii=False, indent=2)}")
+                
+                return completion
+                
+            except Exception as e:
+                logger.error(f"LLM API call failed ({call_label}): {e}", exc_info=True)
+                raise
+        
+        return wrapper
+    return decorator
+
 
 MEMORY_TURNS = 5 # LLM 回复中包含的最近消息数量
 MAX_HISTORY_TEXT_LENGTH = 2000 # 单条消息最大字符数
@@ -437,6 +515,30 @@ def _handle_tool_calls(tool_calls: List, messages: List[Dict]) -> List[Dict]:
     return messages
 
 
+@log_api_call(call_label="调用 LLM API")
+def _call_llm_with_tools(client, model, messages, tools, tool_choice="auto"):
+    """
+    调用 LLM API
+    
+    Args:
+        client: OpenAI 客户端实例
+        model: 模型名称
+        messages: 消息历史列表
+        tools: 可用工具列表
+        tool_choice: 工具选择方式
+    
+    Returns:
+        API 响应对象
+    """
+    return client.chat.completions.create(
+        model=model,
+        messages=messages,
+        tools=tools,
+        tool_choice=tool_choice,
+        timeout=30,
+    )
+
+
 def _build_messages(user_id, channel_id, bot_instance_id, prompt):
     """
     构建 LLM 对话消息历史
@@ -536,13 +638,7 @@ def ask_llm(
         tools = [SEARCH_TOOL_SCHEMA] + SYSTEM_TOOL_SCHEMAS if enable_search else SYSTEM_TOOL_SCHEMAS
         
         # 第一次 API 调用：允许模型使用工具获取实时信息
-        completion = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            tools=tools,
-            tool_choice="auto",  # 让模型自动决定是否使用工具
-            timeout=30,
-        )
+        completion = _call_llm_with_tools(client, model, messages, tools)
 
         # 如果模型请求使用工具，则处理工具调用并进行第二次 API 调用
         if completion.choices[0].message.tool_calls:
@@ -555,14 +651,7 @@ def ask_llm(
             )
             
             # 第二次调用：基于工具结果生成最终回复（禁止再次调用工具）
-            logger.info("Sending second request with tool results (tool_choice=none)...")
-            completion = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                tools=tools,
-                tool_choice="none",  # 关键：禁止再次调用工具，防止无限循环
-                timeout=30,
-            )
+            completion = _call_llm_without_tools(client, model, messages, "none")
 
         result = completion.choices[0].message.content
         logger.info(f"LLM response received: user={user_id}, response_len={len(result)}")
