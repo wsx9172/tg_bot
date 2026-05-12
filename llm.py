@@ -2,6 +2,7 @@ import logging
 import os
 import json
 from typing import Dict, List, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from openai import OpenAI
 
 from db import get_recent_llm_messages, log_llm
@@ -9,8 +10,8 @@ from system_tools import SYSTEM_TOOLS, SYSTEM_TOOL_SCHEMAS
 
 logger = logging.getLogger(__name__)
 
-MEMORY_TURNS = 6
-MAX_HISTORY_TEXT_LENGTH = 2000
+MEMORY_TURNS = 5 # LLM 回复中包含的最近消息数量
+MAX_HISTORY_TEXT_LENGTH = 2000 # 单条消息最大字符数
 MAX_TOOL_CONTENT = 4000  # 工具返回内容最大字符数
 MAX_SNIPPET_LENGTH = 300  # 搜索结果摘要最大长度
 
@@ -59,6 +60,19 @@ SEARCH_TOOL_SCHEMA = {
 
 
 def _config_value(config, *names, default=None):
+    """
+    从配置字典中按优先级获取配置值
+    
+    依次尝试多个可能的键名，返回第一个非空值。用于兼容不同版本的配置项命名。
+    
+    Args:
+        config: 配置字典对象
+        *names: 要查找的键名列表（按优先级排序）
+        default: 默认返回值，当所有键都不存在时返回
+    
+    Returns:
+        找到的第一个非空配置值，或默认值
+    """
     for name in names:
         value = config.get(name)
         if value:
@@ -67,6 +81,16 @@ def _config_value(config, *names, default=None):
 
 
 def _trim_text(text, max_length=MAX_HISTORY_TEXT_LENGTH):
+    """
+    截断文本到指定长度，防止超出上下文限制
+    
+    Args:
+        text: 需要截断的文本内容
+        max_length: 最大允许长度（默认使用全局常量）
+    
+    Returns:
+        截断后的文本，如果超长则添加省略标记
+    """
     if not text:
         return ""
     text = str(text)
@@ -76,6 +100,17 @@ def _trim_text(text, max_length=MAX_HISTORY_TEXT_LENGTH):
 
 
 def _normalize_base_url(api_url):
+    """
+    规范化 API 基础 URL
+    
+    移除末尾的斜杠和 /chat/completions 路径后缀，确保 URL 格式统一。
+    
+    Args:
+        api_url: 原始 API URL 地址
+    
+    Returns:
+        规范化后的基础 URL，如果输入为空则返回 None
+    """
     if not api_url:
         return None
     api_url = api_url.rstrip("/")
@@ -208,9 +243,145 @@ def _tool_call_to_dict(tool_call) -> Dict:
     }
 
 
+def _execute_single_tool(tool_call) -> Dict:
+    """
+    执行单个工具调用
+    
+    Args:
+        tool_call: 单个工具调用对象
+    
+    Returns:
+        包含 tool_call_id 和 content 的字典
+    """
+    function_name = tool_call.function.name
+    function_args = tool_call.function.arguments
+    
+    logger.info(f"Tool call detected: function={function_name}, args={function_args}")
+    
+    # 根据工具名称分发执行：网络搜索、系统工具或未知工具
+    if function_name == "web_search":
+        try:
+            args = json.loads(function_args)
+            query = args.get("query", "")
+            num_results = args.get("num_results", 3)
+            
+            if not query:
+                logger.warning("Web search called with empty query")
+                return {
+                    "tool_call_id": tool_call.id,
+                    "content": json.dumps({
+                        "status": "failed",
+                        "reason": "Empty search query",
+                        "results": []
+                    }, ensure_ascii=False)
+                }
+            
+            # 执行搜索
+            search_result = _web_search(query, num_results)
+            
+            # 截断过长的搜索结果，防止超出 context
+            result_json = json.dumps(search_result, ensure_ascii=False, indent=2)
+            truncated_result = _truncate_tool_content(result_json)
+            
+            logger.info(f"Tool execution completed: {function_name}, status={search_result.get('status')}")
+            return {
+                "tool_call_id": tool_call.id,
+                "content": truncated_result
+            }
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse tool arguments: {e}")
+            return {
+                "tool_call_id": tool_call.id,
+                "content": json.dumps({
+                    "status": "failed",
+                    "reason": f"Invalid arguments: {str(e)}",
+                    "results": []
+                }, ensure_ascii=False)
+            }
+        except Exception as e:
+            logger.error(f"Tool execution failed: {e}", exc_info=True)
+            return {
+                "tool_call_id": tool_call.id,
+                "content": json.dumps({
+                    "status": "failed",
+                    "reason": f"Execution error: {str(e)}",
+                    "results": []
+                }, ensure_ascii=False)
+            }
+    
+    elif function_name in SYSTEM_TOOLS:
+        # 执行系统工具
+        try:
+            args = json.loads(function_args)
+            
+            # 根据函数名动态调用，传递相应参数
+            if function_name == "get_disk_usage":
+                path = args.get("path", "/")
+                tool_result = SYSTEM_TOOLS[function_name](path=path)
+            elif function_name == "get_top_processes":
+                limit = args.get("limit", 10)
+                sort_by = args.get("sort_by", "cpu")
+                tool_result = SYSTEM_TOOLS[function_name](limit=limit, sort_by=sort_by)
+            elif function_name == "get_process_info":
+                pid = args.get("pid")
+                tool_result = SYSTEM_TOOLS[function_name](pid=pid)
+            elif function_name == "get_docker_containers":
+                limit = args.get("limit", 10)
+                tool_result = SYSTEM_TOOLS[function_name](limit=limit)
+            else:
+                # 无参数函数
+                tool_result = SYSTEM_TOOLS[function_name]()
+            
+            # 截断过长的工具结果
+            result_json = json.dumps(tool_result, ensure_ascii=False, indent=2)
+            truncated_result = _truncate_tool_content(result_json)
+            
+            logger.info(f"System tool execution completed: {function_name}, status={tool_result.get('status')}")
+            return {
+                "tool_call_id": tool_call.id,
+                "content": truncated_result
+            }
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse system tool arguments: {e}")
+            return {
+                "tool_call_id": tool_call.id,
+                "content": json.dumps({
+                    "status": "failed",
+                    "reason": f"Invalid arguments: {str(e)}",
+                    "results": []
+                }, ensure_ascii=False)
+            }
+        except Exception as e:
+            logger.error(f"System tool execution failed: {e}", exc_info=True)
+            return {
+                "tool_call_id": tool_call.id,
+                "content": json.dumps({
+                    "status": "failed",
+                    "reason": f"Execution error: {str(e)}",
+                    "results": []
+                }, ensure_ascii=False)
+            }
+    
+    else:
+        logger.warning(f"Unknown tool function: {function_name}")
+        return {
+            "tool_call_id": tool_call.id,
+            "content": json.dumps({
+                "status": "failed",
+                "reason": f"Unknown function: {function_name}",
+                "results": []
+            }, ensure_ascii=False)
+        }
+
+
 def _handle_tool_calls(tool_calls: List, messages: List[Dict]) -> List[Dict]:
     """
-    处理模型的工具调用请求
+    处理模型的工具调用请求（使用线程池并行执行）
+    
+    使用 ThreadPoolExecutor 并行执行多个工具调用，提高响应速度。
+    所有工具调用完成后，按原始顺序将结果添加到消息历史中。
     
     Args:
         tool_calls: 模型返回的工具调用列表
@@ -219,150 +390,69 @@ def _handle_tool_calls(tool_calls: List, messages: List[Dict]) -> List[Dict]:
     Returns:
         更新后的消息历史
     """
+    # 将工具调用添加到消息历史
+    messages.append({
+        "role": "assistant",
+        "tool_calls": [_tool_call_to_dict(tc) for tc in tool_calls]
+    })
+    
+    # 使用线程池并行执行所有工具调用
+    tool_results = {}
+    max_workers = min(len(tool_calls), 5)  # 最多5个并发线程
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # 提交所有工具调用任务
+        future_to_tool_call = {
+            executor.submit(_execute_single_tool, tc): tc 
+            for tc in tool_calls
+        }
+        
+        # 收集执行结果
+        for future in as_completed(future_to_tool_call):
+            tool_call = future_to_tool_call[future]
+            try:
+                result = future.result()
+                tool_results[tool_call.id] = result
+            except Exception as e:
+                logger.error(f"Tool execution exception: {e}", exc_info=True)
+                tool_results[tool_call.id] = {
+                    "tool_call_id": tool_call.id,
+                    "content": json.dumps({
+                        "status": "failed",
+                        "reason": f"Unexpected error: {str(e)}",
+                        "results": []
+                    }, ensure_ascii=False)
+                }
+    
+    # 按原始顺序添加工具响应到消息历史
     for tool_call in tool_calls:
-        function_name = tool_call.function.name
-        function_args = tool_call.function.arguments
-        
-        logger.info(f"Tool call detected: function={function_name}, args={function_args}")
-        
-        # 将工具调用添加到消息历史（使用兼容的转换方法）
-        messages.append({
-            "role": "assistant",
-            "tool_calls": [_tool_call_to_dict(tool_call)]
-        })
-        
-        # 执行对应的工具函数
-        if function_name == "web_search":
-            try:
-                args = json.loads(function_args)
-                query = args.get("query", "")
-                num_results = args.get("num_results", 3)
-                
-                if not query:
-                    logger.warning("Web search called with empty query")
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": json.dumps({
-                            "status": "failed",
-                            "reason": "Empty search query",
-                            "results": []
-                        }, ensure_ascii=False)
-                    })
-                    continue
-                
-                # 执行搜索
-                search_result = _web_search(query, num_results)
-                
-                # 截断过长的搜索结果，防止超出 context
-                result_json = json.dumps(search_result, ensure_ascii=False, indent=2)
-                truncated_result = _truncate_tool_content(result_json)
-                
-                # 将搜索结果添加为工具响应
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": truncated_result
-                })
-                
-                logger.info(f"Tool execution completed: {function_name}, status={search_result.get('status')}")
-                
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse tool arguments: {e}")
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": json.dumps({
-                        "status": "failed",
-                        "reason": f"Invalid arguments: {str(e)}",
-                        "results": []
-                    }, ensure_ascii=False)
-                })
-            except Exception as e:
-                logger.error(f"Tool execution failed: {e}", exc_info=True)
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": json.dumps({
-                        "status": "failed",
-                        "reason": f"Execution error: {str(e)}",
-                        "results": []
-                    }, ensure_ascii=False)
-                })
-        elif function_name in SYSTEM_TOOLS:
-            # 执行系统工具
-            try:
-                args = json.loads(function_args)
-                
-                # 根据函数名动态调用，传递相应参数
-                if function_name == "get_disk_usage":
-                    path = args.get("path", "/")
-                    tool_result = SYSTEM_TOOLS[function_name](path=path)
-                elif function_name == "get_top_processes":
-                    limit = args.get("limit", 10)
-                    sort_by = args.get("sort_by", "cpu")
-                    tool_result = SYSTEM_TOOLS[function_name](limit=limit, sort_by=sort_by)
-                elif function_name == "get_process_info":
-                    pid = args.get("pid")
-                    tool_result = SYSTEM_TOOLS[function_name](pid=pid)
-                elif function_name == "get_docker_containers":
-                    limit = args.get("limit", 10)
-                    tool_result = SYSTEM_TOOLS[function_name](limit=limit)
-                else:
-                    # 无参数函数
-                    tool_result = SYSTEM_TOOLS[function_name]()
-                
-                # 截断过长的工具结果
-                result_json = json.dumps(tool_result, ensure_ascii=False, indent=2)
-                truncated_result = _truncate_tool_content(result_json)
-                
-                # 将工具结果添加为工具响应
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": truncated_result
-                })
-                
-                logger.info(f"System tool execution completed: {function_name}, status={tool_result.get('status')}")
-                
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse system tool arguments: {e}")
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": json.dumps({
-                        "status": "failed",
-                        "reason": f"Invalid arguments: {str(e)}",
-                        "results": []
-                    }, ensure_ascii=False)
-                })
-            except Exception as e:
-                logger.error(f"System tool execution failed: {e}", exc_info=True)
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": json.dumps({
-                        "status": "failed",
-                        "reason": f"Execution error: {str(e)}",
-                        "results": []
-                    }, ensure_ascii=False)
-                })
-        else:
-            logger.warning(f"Unknown tool function: {function_name}")
+        result = tool_results.get(tool_call.id)
+        if result:
             messages.append({
                 "role": "tool",
-                "tool_call_id": tool_call.id,
-                "content": json.dumps({
-                    "status": "failed",
-                    "reason": f"Unknown function: {function_name}",
-                    "results": []
-                }, ensure_ascii=False)
+                "tool_call_id": result["tool_call_id"],
+                "content": result["content"]
             })
     
     return messages
 
 
 def _build_messages(user_id, channel_id, bot_instance_id, prompt):
+    """
+    构建 LLM 对话消息历史
+    
+    从数据库加载最近的对话历史，并与当前用户输入组合成完整的消息列表。
+    包含系统提示、历史对话和当前问题。
+    
+    Args:
+        user_id: 用户唯一标识符
+        channel_id: 频道标识符
+        bot_instance_id: Bot 实例标识符
+        prompt: 当前用户的问题或指令
+    
+    Returns:
+        包含系统提示、历史对话和当前问题的完整消息列表
+    """
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     try:
@@ -396,9 +486,32 @@ def ask_llm(
     config,
     prompt,
 ):
+    """
+    向 LLM 发起对话请求并获取回复
+    
+    这是主要的 LLM 调用入口函数，支持工具调用（如网络搜索、系统信息查询等）。
+    采用两阶段调用策略：第一次允许工具调用，第二次禁止工具调用以获取最终回复。
+    
+    Args:
+        user_id: 用户唯一标识符
+        channel_id: 频道标识符
+        bot_instance_id: Bot 实例标识符
+        provider_id: LLM 提供商标识符（用于日志记录）
+        config: 配置字典，包含 api_key、api_url、model 等配置项
+        prompt: 用户的问题或指令
+    
+    Returns:
+        LLM 生成的文本回复，或在出错时返回错误信息字符串
+    
+    Note:
+        - 如果启用搜索功能，模型可以调用 web_search 工具获取实时信息
+        - 工具调用结果会被截断以防止超出上下文限制
+        - 所有对话都会记录到数据库供后续使用
+    """
     logger.info(f"LLM request started: user={user_id}, provider={provider_id}, prompt_len={len(prompt)}")
     
     try:
+        # 从配置中提取 API 密钥、URL、模型和搜索功能开关
         api_key = _config_value(config, "api_key", "OPENAI_API_KEY")
         api_url = _config_value(config, "api_url", "OPENAI_API_URL")
         model = _config_value(config, "model", "OPENAI_MODEL", default="deepseek-v4-pro")
@@ -410,18 +523,19 @@ def ask_llm(
 
         logger.debug(f"Calling LLM API: model={model}, base_url={_normalize_base_url(api_url)}, enable_search={enable_search}")
         
+        # 初始化 OpenAI 客户端
         client = OpenAI(
             api_key=api_key,
             base_url=_normalize_base_url(api_url),
         )
 
-        # 构建初始消息
+        # 构建包含历史对话的初始消息列表
         messages = _build_messages(user_id, channel_id, bot_instance_id, prompt)
         
-        # 准备工具列表（如果启用搜索功能）
+        # 根据配置准备可用的工具列表
         tools = [SEARCH_TOOL_SCHEMA] + SYSTEM_TOOL_SCHEMAS if enable_search else SYSTEM_TOOL_SCHEMAS
         
-        # 第一次调用
+        # 第一次 API 调用：允许模型使用工具获取实时信息
         completion = client.chat.completions.create(
             model=model,
             messages=messages,
@@ -430,17 +544,17 @@ def ask_llm(
             timeout=30,
         )
 
-        # 检查是否有工具调用
+        # 如果模型请求使用工具，则处理工具调用并进行第二次 API 调用
         if completion.choices[0].message.tool_calls:
             logger.info(f"Model requested tool calls: {len(completion.choices[0].message.tool_calls)} calls")
             
-            # 处理工具调用
+            # 执行所有工具调用并将结果添加到消息历史
             messages = _handle_tool_calls(
                 completion.choices[0].message.tool_calls,
                 messages
             )
             
-            # 第二次调用：禁止工具调用，防止无限循环
+            # 第二次调用：基于工具结果生成最终回复（禁止再次调用工具）
             logger.info("Sending second request with tool results (tool_choice=none)...")
             completion = client.chat.completions.create(
                 model=model,
@@ -457,6 +571,7 @@ def ask_llm(
             logger.warning("Empty response from API")
             return "Empty response from API"
 
+        # 将对话记录保存到数据库
         try:
             log_llm(
                 user_id,
