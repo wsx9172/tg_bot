@@ -652,7 +652,7 @@ def ask_llm(
             )
             
             # 第二次调用：基于工具结果生成最终回复（禁止再次调用工具）
-            completion = _call_llm(client, model, messages, "none")
+            completion = _call_llm(client, model, messages, tools=[], tool_choice="none")
 
         result = completion.choices[0].message.content
         logger.info(f"LLM response received: user={user_id}, response_len={len(result)}")
