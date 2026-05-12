@@ -131,7 +131,7 @@ AI：[调用搜索工具] → [获取最新信息] → [生成回答]
 
 ### 日志配置说明
 
-项目内置了完整的日志系统，可以通过环境变量进行配置：
+项目内置了完整的日志系统，支持控制台和文件双输出，并配置了合理的滚动策略。
 
 #### LOG_LEVEL
 
@@ -152,32 +152,87 @@ LOG_LEVEL=DEBUG
 是否启用 SQL 日志，记录所有数据库操作：
 
 - `true` 或 `1` 或 `yes`：启用 SQL 日志
-- `false` 或其他值：禁用 SQL 日志
+- `false` 或其他值：禁用 SQL 日志（默认）
 
 示例：
 ```env
 LOG_SQL=true
 ```
 
-启用后，所有 SQL 语句和参数都会以以下格式输出：
+#### 日志文件配置
+
+**自动创建目录**：
+- 程序启动时自动创建 `./log` 目录
+- 无需手动创建，如果目录不存在会自动生成
+
+**日志文件位置**：
+- 主日志文件：`./log/bot.log`
+- SQL 日志文件：`./log/sql.log`（仅当 `LOG_SQL=true` 时生成）
+
+**滚动策略**：
+- **文件大小限制**：单个日志文件最大 10MB
+- **备份数量**：保留最近 5 个备份文件
+- **自动轮转**：当日志文件超过 10MB 时，自动创建新文件
+- **文件命名**：
+  - `bot.log` - 当前日志
+  - `bot.log.1` - 最近的备份
+  - `bot.log.2` - 次近的备份
+  - ...以此类推
+
+**编码格式**：UTF-8，支持中文日志
+
+**输出方式**：
+- ✅ **控制台输出**：实时显示在终端
+- ✅ **文件输出**：持久化保存到磁盘
+- 两者独立配置，互不影响
+
+#### 日志目录结构
+
 ```
-2024-01-15 10:30:45 - SQL - DEBUG - SQL: SELECT 1 FROM node WHERE id=%s LIMIT 1 | Params: (1,)
+bot/
+├── log/                  # 日志目录（自动创建）
+│   ├── bot.log          # 主日志文件
+│   ├── bot.log.1        # 备份文件 1
+│   ├── bot.log.2        # 备份文件 2
+│   ├── ...
+│   ├── sql.log          # SQL 日志文件（可选）
+│   └── sql.log.1        # SQL 备份文件
+├── config.py
+├── main.py
+└── ...
 ```
 
-#### 日志格式
+#### 查看日志
 
-所有日志统一格式：
-```
-YYYY-MM-DD HH:MM:SS - 模块名 - 级别 - 消息内容
+**实时查看**：
+```bash
+# Linux/macOS
+tail -f log/bot.log
+
+# Windows PowerShell
+Get-Content log/bot.log -Wait -Tail 50
 ```
 
-示例输出：
+**查看历史日志**：
+```bash
+# 查看最近的 100 行
+tail -n 100 log/bot.log
+
+# 搜索特定关键词
+grep "ERROR" log/bot.log
+grep "user_id=123456" log/bot.log
 ```
-2024-01-15 10:30:45 - main - INFO - User admin (ID: 123456) started bot
-2024-01-15 10:30:45 - sql - DEBUG - SQL: SELECT id FROM `user` WHERE platform=%s AND external_user_id=%s | Params: ('telegram', '123456')
-2024-01-15 10:30:45 - executor - INFO - Executing command: uptime by user=admin
-2024-01-15 10:30:45 - monitor - WARNING - Alert triggered: CPU high 92%
-```
+
+**清理旧日志**：
+- 系统自动管理，超过 5 个备份的文件会被自动删除
+- 如需手动清理：`rm log/bot.log.*`
+
+#### 调试技巧
+
+1. **开发环境**：设置 `LOG_LEVEL=DEBUG` 获取最详细信息
+2. **生产环境**：设置 `LOG_LEVEL=INFO` 平衡性能和可观测性
+3. **SQL 调试**：临时设置 `LOG_SQL=true` 排查数据库问题
+4. **日志分析**：定期检查 `log/` 目录，分析错误模式
 
 ## 初始化
 

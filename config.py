@@ -34,14 +34,46 @@ LOG_SQL = os.getenv("LOG_SQL", "false").lower() in ("true", "1", "yes")
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-# 配置根日志记录器
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format=LOG_FORMAT,
-    datefmt=LOG_DATE_FORMAT,
-)
+# 日志文件配置
+LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "log")
+LOG_FILE = os.path.join(LOG_DIR, "bot.log")
+LOG_MAX_BYTES = 10 * 1024 * 1024  # 单个日志文件最大 10MB
+LOG_BACKUP_COUNT = 5  # 保留 5 个备份文件
 
-# 如果启用 SQL 日志，配置 pymysql 的日志
+# 自动创建 log 目录
+if not os.path.exists(LOG_DIR):
+    os.makedirs(LOG_DIR)
+
+# 配置根日志记录器（同时输出到控制台和文件）
+root_logger = logging.getLogger()
+root_logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
+
+# 清除已有的 handler（防止重复添加）
+root_logger.handlers.clear()
+
+# 控制台 handler
+console_handler = logging.StreamHandler()
+console_handler.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
+console_handler.setFormatter(
+    logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
+)
+root_logger.addHandler(console_handler)
+
+# 文件 handler（带滚动策略）
+from logging.handlers import RotatingFileHandler
+file_handler = RotatingFileHandler(
+    LOG_FILE,
+    maxBytes=LOG_MAX_BYTES,
+    backupCount=LOG_BACKUP_COUNT,
+    encoding='utf-8'
+)
+file_handler.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
+file_handler.setFormatter(
+    logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
+)
+root_logger.addHandler(file_handler)
+
+# SQL 日志专用配置
 if LOG_SQL:
     # 设置 pymysql 日志级别为 DEBUG 以捕获所有 SQL
     logging.getLogger('pymysql').setLevel(logging.DEBUG)
@@ -53,15 +85,32 @@ if LOG_SQL:
     # 防止日志重复
     sql_logger.propagate = False
     
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.DEBUG)
-    console_handler.setFormatter(
+    # SQL 控制台 handler
+    sql_console_handler = logging.StreamHandler()
+    sql_console_handler.setLevel(logging.DEBUG)
+    sql_console_handler.setFormatter(
         logging.Formatter(
             '%(asctime)s - SQL - %(levelname)s - %(message)s',
             datefmt=LOG_DATE_FORMAT
         )
     )
-    sql_logger.addHandler(console_handler)
+    sql_logger.addHandler(sql_console_handler)
+    
+    # SQL 文件 handler（带滚动策略）
+    sql_file_handler = RotatingFileHandler(
+        os.path.join(LOG_DIR, "sql.log"),
+        maxBytes=LOG_MAX_BYTES,
+        backupCount=LOG_BACKUP_COUNT,
+        encoding='utf-8'
+    )
+    sql_file_handler.setLevel(logging.DEBUG)
+    sql_file_handler.setFormatter(
+        logging.Formatter(
+            '%(asctime)s - SQL - %(levelname)s - %(message)s',
+            datefmt=LOG_DATE_FORMAT
+        )
+    )
+    sql_logger.addHandler(sql_file_handler)
 
 
 # Telegram（支持 TELEGRAM_BOT_TOKEN 或兼容别名 BOT_TOKEN）
