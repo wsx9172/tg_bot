@@ -5,7 +5,7 @@ from typing import Dict, List, Optional
 from openai import OpenAI
 
 from db import get_recent_llm_messages, log_llm
-from system_tools import SYSTEM_TOOLS
+from system_tools import SYSTEM_TOOLS, SYSTEM_TOOL_SCHEMAS
 
 logger = logging.getLogger(__name__)
 
@@ -56,113 +56,6 @@ SEARCH_TOOL_SCHEMA = {
         }
     }
 }
-
-# 定义系统监控工具的 schemas
-CPU_USAGE_TOOL_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "get_cpu_usage",
-        "description": "获取 CPU 使用率信息，包括总体使用率、每核使用率和 CPU 频率。",
-        "parameters": {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
-    }
-}
-
-MEMORY_INFO_TOOL_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "get_memory_info",
-        "description": "获取详细内存信息，包括虚拟内存和交换空间的使用情况。",
-        "parameters": {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
-    }
-}
-
-MEMORY_SUMMARY_TOOL_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "get_memory_summary",
-        "description": "获取内存摘要信息（类似 free 命令）。",
-        "parameters": {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
-    }
-}
-
-DISK_USAGE_TOOL_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "get_disk_usage",
-        "description": "获取磁盘使用情况，可指定路径，默认为根目录。",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "要检查的路径，默认为 '/'",
-                    "default": "/"
-                }
-            },
-            "required": []
-        }
-    }
-}
-
-TOP_PROCESSES_TOOL_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "get_top_processes",
-        "description": "获取占用资源最多的进程列表（类似 top 命令），可指定数量和排序方式。",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "limit": {
-                    "type": "integer",
-                    "description": "返回的进程数量，默认10",
-                    "default": 10
-                },
-                "sort_by": {
-                    "type": "string",
-                    "description": "排序方式，'cpu' 或 'memory'，默认为 'cpu'",
-                    "default": "cpu"
-                }
-            },
-            "required": []
-        }
-    }
-}
-
-DOCKER_STATUS_TOOL_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "get_docker_status",
-        "description": "获取 Docker 服务状态和容器统计信息。",
-        "parameters": {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
-    }
-}
-
-# 合并所有工具 schema
-ALL_TOOL_SCHEMAS = [
-    SEARCH_TOOL_SCHEMA,
-    CPU_USAGE_TOOL_SCHEMA,
-    MEMORY_INFO_TOOL_SCHEMA,
-    MEMORY_SUMMARY_TOOL_SCHEMA,
-    DISK_USAGE_TOOL_SCHEMA,
-    TOP_PROCESSES_TOOL_SCHEMA,
-    DOCKER_STATUS_TOOL_SCHEMA
-]
 
 
 def _config_value(config, *names, default=None):
@@ -401,7 +294,7 @@ def _handle_tool_calls(tool_calls: List, messages: List[Dict]) -> List[Dict]:
             try:
                 args = json.loads(function_args)
                 
-                # 特殊处理带参数的函数
+                # 根据函数名动态调用，传递相应参数
                 if function_name == "get_disk_usage":
                     path = args.get("path", "/")
                     tool_result = SYSTEM_TOOLS[function_name](path=path)
@@ -409,6 +302,12 @@ def _handle_tool_calls(tool_calls: List, messages: List[Dict]) -> List[Dict]:
                     limit = args.get("limit", 10)
                     sort_by = args.get("sort_by", "cpu")
                     tool_result = SYSTEM_TOOLS[function_name](limit=limit, sort_by=sort_by)
+                elif function_name == "get_process_info":
+                    pid = args.get("pid")
+                    tool_result = SYSTEM_TOOLS[function_name](pid=pid)
+                elif function_name == "get_docker_containers":
+                    limit = args.get("limit", 10)
+                    tool_result = SYSTEM_TOOLS[function_name](limit=limit)
                 else:
                     # 无参数函数
                     tool_result = SYSTEM_TOOLS[function_name]()
@@ -520,7 +419,7 @@ def ask_llm(
         messages = _build_messages(user_id, channel_id, bot_instance_id, prompt)
         
         # 准备工具列表（如果启用搜索功能）
-        tools = ALL_TOOL_SCHEMAS if enable_search else [CPU_USAGE_TOOL_SCHEMA, MEMORY_INFO_TOOL_SCHEMA, MEMORY_SUMMARY_TOOL_SCHEMA, DISK_USAGE_TOOL_SCHEMA, TOP_PROCESSES_TOOL_SCHEMA, DOCKER_STATUS_TOOL_SCHEMA]
+        tools = [SEARCH_TOOL_SCHEMA] + SYSTEM_TOOL_SCHEMAS if enable_search else SYSTEM_TOOL_SCHEMAS
         
         # 第一次调用
         completion = client.chat.completions.create(

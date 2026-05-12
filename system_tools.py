@@ -486,6 +486,167 @@ def _format_bytes(bytes_value: int) -> str:
     return f"{bytes_value:.2f} PB"
 
 
+# ==================== 工具 Schema 定义 ====================
+
+CPU_USAGE_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "get_cpu_usage",
+        "description": "获取 CPU 使用率信息，包括总体使用率、每核使用率和 CPU 频率。",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    }
+}
+
+MEMORY_INFO_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "get_memory_info",
+        "description": "获取详细内存信息，包括虚拟内存和交换空间的使用情况。",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    }
+}
+
+MEMORY_SUMMARY_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "get_memory_summary",
+        "description": "获取内存摘要信息（类似 free 命令）。",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    }
+}
+
+DISK_USAGE_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "get_disk_usage",
+        "description": "获取磁盘使用情况，可指定路径，默认为根目录。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "要检查的路径，默认为 '/'",
+                    "default": "/"
+                }
+            },
+            "required": []
+        }
+    }
+}
+
+DISK_PARTITIONS_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "get_disk_partitions",
+        "description": "获取所有磁盘分区信息。",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    }
+}
+
+TOP_PROCESSES_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "get_top_processes",
+        "description": "获取占用资源最多的进程列表（类似 top 命令），可指定数量和排序方式。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "返回的进程数量，默认10",
+                    "default": 10
+                },
+                "sort_by": {
+                    "type": "string",
+                    "description": "排序方式，'cpu' 或 'memory'，默认为 'cpu'",
+                    "default": "cpu"
+                }
+            },
+            "required": []
+        }
+    }
+}
+
+PROCESS_INFO_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "get_process_info",
+        "description": "获取指定进程的详细信息。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "pid": {
+                    "type": "integer",
+                    "description": "进程 ID"
+                }
+            },
+            "required": ["pid"]
+        }
+    }
+}
+
+DOCKER_STATUS_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "get_docker_status",
+        "description": "获取 Docker 服务状态和容器统计信息。",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    }
+}
+
+DOCKER_CONTAINERS_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "get_docker_containers",
+        "description": "获取 Docker 容器列表。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "返回的容器数量，默认10",
+                    "default": 10
+                }
+            },
+            "required": []
+        }
+    }
+}
+
+# 合并所有系统工具 schema
+SYSTEM_TOOL_SCHEMAS = [
+    CPU_USAGE_TOOL_SCHEMA,
+    MEMORY_INFO_TOOL_SCHEMA,
+    MEMORY_SUMMARY_TOOL_SCHEMA,
+    DISK_USAGE_TOOL_SCHEMA,
+    DISK_PARTITIONS_TOOL_SCHEMA,
+    TOP_PROCESSES_TOOL_SCHEMA,
+    PROCESS_INFO_TOOL_SCHEMA,
+    DOCKER_STATUS_TOOL_SCHEMA,
+    DOCKER_CONTAINERS_TOOL_SCHEMA,
+]
+
+
 # ==================== 工具注册表 ====================
 
 SYSTEM_TOOLS = {
