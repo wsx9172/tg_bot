@@ -95,12 +95,11 @@ MEMORY_TURNS = 5 # LLM 回复中包含的最近消息数量
 MAX_HISTORY_TEXT_LENGTH = 2000 # 单条消息最大字符数
 MAX_TOOL_CONTENT = 4000  # 工具返回内容最大字符数
 MAX_SNIPPET_LENGTH = 300  # 搜索结果摘要最大长度
+MAX_TOOL_CALL_ROUNDS = 3  # 工具调用最大轮次，防止无限循环
 
 SYSTEM_PROMPT = """
-You are a helpful AI assistant.
-
 You have strong expertise in Linux operations, ChatOps, Docker, networking, backend systems, and troubleshooting.
-
+You may also answer general questions when appropriate.
 You should:
 - Prefer technical and practical answers when questions are related to systems, programming, or infrastructure
 - Use tools when needed for real-time or system information
@@ -657,8 +656,8 @@ def ask_llm(
     """
     向 LLM 发起对话请求并获取回复
     
-    这是主要的 LLM 调用入口函数，支持工具调用（如网络搜索、系统信息查询等）。
-    采用两阶段调用策略：第一次允许工具调用，第二次禁止工具调用以获取最终回复。
+    这是主要的 LLM 调用入口函数，支持多轮工具调用（如网络搜索、系统信息查询等）。
+    采用循环调用策略：允许多轮工具调用，直到模型返回最终回复或达到最大轮次限制。
     
     Args:
         user_id: 用户唯一标识符
@@ -675,6 +674,7 @@ def ask_llm(
         - 如果启用搜索功能，模型可以调用 web_search 工具获取实时信息
         - 工具调用结果会被截断以防止超出上下文限制
         - 所有对话都会记录到数据库供后续使用
+        - 最多进行 MAX_TOOL_CALL_ROUNDS 轮工具调用，防止无限循环
     """
     logger.info(f"LLM request started: user={user_id}, provider={provider_id}, prompt_len={len(prompt)}")
     
@@ -703,21 +703,36 @@ def ask_llm(
         # 根据配置准备可用的工具列表
         tools = [SEARCH_TOOL_SCHEMA] + SYSTEM_TOOL_SCHEMAS if enable_search else SYSTEM_TOOL_SCHEMAS
         
-        # 第一次 API 调用：允许模型使用工具获取实时信息
-        completion = _call_llm(client, model, messages, tools)
-
-        # 如果模型请求使用工具，则处理工具调用并进行第二次 API 调用
-        if completion.choices[0].message.tool_calls:
-            logger.info(f"Model requested tool calls: {len(completion.choices[0].message.tool_calls)} calls")
+        # 多轮工具调用循环
+        for round_num in range(1, MAX_TOOL_CALL_ROUNDS + 1):
+            logger.info(f"LLM API call round {round_num}/{MAX_TOOL_CALL_ROUNDS}")
             
-            # 执行所有工具调用并将结果添加到消息历史
-            messages = _handle_tool_calls(
-                completion.choices[0].message.tool_calls,
-                messages
-            )
+            # 调用 LLM API
+            completion = _call_llm(client, model, messages, tools)
             
-            # 第二次调用：基于工具结果生成最终回复（禁止再次调用工具）
-            completion = _call_llm(client, model, messages, tools=[], tool_choice="none")
+            # 检查是否有工具调用
+            if completion.choices[0].message.tool_calls:
+                logger.info(f"Round {round_num}: Model requested {len(completion.choices[0].message.tool_calls)} tool calls")
+                
+                # 执行所有工具调用并将结果添加到消息历史
+                messages = _handle_tool_calls(
+                    completion.choices[0].message.tool_calls,
+                    messages
+                )
+                
+                # 如果不是最后一轮，继续循环
+                if round_num < MAX_TOOL_CALL_ROUNDS:
+                    logger.info(f"Round {round_num} completed, proceeding to next round...")
+                    continue
+                else:
+                    # 达到最大轮次，强制禁止工具调用以获取最终回复
+                    logger.warning(f"Reached max tool call rounds ({MAX_TOOL_CALL_ROUNDS}), forcing final response")
+                    completion = _call_llm(client, model, messages, tools=[], tool_choice="none")
+                    break
+            else:
+                # 没有工具调用，直接返回结果
+                logger.info(f"Round {round_num}: No tool calls, got final response")
+                break
 
         result = completion.choices[0].message.content
         logger.info(f"LLM response received: user={user_id}, response_len={len(result)}")
