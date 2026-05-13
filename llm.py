@@ -95,7 +95,7 @@ MEMORY_TURNS = 5 # LLM 回复中包含的最近消息数量
 MAX_HISTORY_TEXT_LENGTH = 2000 # 单条消息最大字符数
 MAX_TOOL_CONTENT = 4000  # 工具返回内容最大字符数
 MAX_SNIPPET_LENGTH = 300  # 搜索结果摘要最大长度
-MAX_TOOL_CALL_ROUNDS = 3  # 工具调用最大轮次，防止无限循环
+MAX_TOOL_CALL_ROUNDS = 5  # 工具调用最大轮次，防止无限循环
 
 SYSTEM_PROMPT = """
 You have strong expertise in Linux operations, ChatOps, Docker, networking, backend systems, and troubleshooting.
@@ -687,170 +687,254 @@ def ask_llm(
     prompt,
 ):
     """
-    向 LLM 发起对话请求并获取回复
-    
-    这是主要的 LLM 调用入口函数，支持多轮工具调用（如网络搜索、系统信息查询等）。
-    采用循环调用策略：允许多轮工具调用，直到模型返回最终回复或达到最大轮次限制。
-    
-    Args:
-        user_id: 用户唯一标识符
-        channel_id: 频道标识符
-        bot_instance_id: Bot 实例标识符
-        provider_id: LLM 提供商标识符（用于日志记录）
-        config: 配置字典，包含 api_key、api_url、model 等配置项
-        prompt: 用户的问题或指令
-    
-    Returns:
-        LLM 生成的文本回复，或在出错时返回错误信息字符串
-    
-    Note:
-        - 如果启用搜索功能，模型可以调用 web_search 工具获取实时信息
-        - 工具调用结果会被截断以防止超出上下文限制
-        - 所有对话都会记录到数据库供后续使用
-        - 最多进行 MAX_TOOL_CALL_ROUNDS 轮工具调用，防止无限循环
+    向 LLM 发起对话请求并获取回复。
+
+    支持：
+    - 多轮 Tool Calling
+    - 工具调用预算限制
+    - 最终强制文本回复
+    - Tool Calling 硬拦截
+    - 对话日志记录
+
+    设计原则：
+    - 不信任模型一定遵守 tool_choice
+    - 最终轮即使返回 tool_calls 也绝不执行
+    - 客户端状态机优先于 Prompt 约束
     """
-    logger.info(f"LLM request started: user={user_id}, provider={provider_id}, prompt_len={len(prompt)}")
-    
+
+    logger.info(
+        f"LLM request started: "
+        f"user={user_id}, provider={provider_id}, prompt_len={len(prompt)}"
+    )
+
     try:
-        # 从配置中提取 API 密钥、URL、模型和启用的工具集合
+        # =========================
+        # 读取配置
+        # =========================
         api_key = _config_value(config, "api_key", "OPENAI_API_KEY")
         api_url = _config_value(config, "api_url", "OPENAI_API_URL")
-        model = _config_value(config, "model", "OPENAI_MODEL", default="deepseek-v4-pro")
-        enabled_tools = _config_value(config, "enabled_tools", "ENABLED_TOOLS", default={"search", "system"})
+        model = _config_value(
+            config,
+            "model",
+            "OPENAI_MODEL",
+            default="deepseek-v4-pro",
+        )
+
+        enabled_tools = _config_value(
+            config,
+            "enabled_tools",
+            "ENABLED_TOOLS",
+            default={"search", "system"},
+        )
 
         if not api_key:
             logger.error("LLM Error: missing api_key")
             return "LLM Error: missing api_key"
 
-        logger.debug(f"Calling LLM API: model={model}, base_url={_normalize_base_url(api_url)}, enabled_tools={enabled_tools}")
-        
-        # 初始化 OpenAI 客户端
+        logger.debug(
+            f"Calling LLM API: "
+            f"model={model}, "
+            f"base_url={_normalize_base_url(api_url)}, "
+            f"enabled_tools={enabled_tools}"
+        )
+
+        # =========================
+        # 初始化 OpenAI Client
+        # =========================
         client = OpenAI(
             api_key=api_key,
             base_url=_normalize_base_url(api_url),
         )
 
-        # 构建包含历史对话的初始消息列表
-        messages = _build_messages(user_id, channel_id, bot_instance_id, prompt)
-        
-        # 根据配置动态构建工具列表（支持扩展）
+        # =========================
+        # 构建初始消息
+        # =========================
+        messages = _build_messages(
+            user_id,
+            channel_id,
+            bot_instance_id,
+            prompt,
+        )
+
+        # =========================
+        # 构建工具列表
+        # =========================
         tools = _build_tools_list(enabled_tools)
-        
-        # 多轮工具调用循环
+
+        # 最终结果
+        result = None
+
+        # =========================
+        # 多轮 Tool Calling
+        # =========================
         for round_num in range(1, MAX_TOOL_CALL_ROUNDS + 1):
-            remaining_rounds = MAX_TOOL_CALL_ROUNDS - round_num
-            
-            # 在每次调用前添加剩余轮次提示，帮助模型更好地规划工具使用
-            tool_budget_message = {
-                "role": "system",
-                "content": (
-                    f"Tool Call Budget: You have {remaining_rounds} more tool call round(s) remaining after this one. "
-                    f"Current round: {round_num}/{MAX_TOOL_CALL_ROUNDS}. "
-                )
-            }
-            
-            logger.info(f"LLM API call round {round_num}/{MAX_TOOL_CALL_ROUNDS} (remaining: {remaining_rounds})")
-            
-            # 调用 LLM API（将预算提示添加到消息列表末尾）
-            messages_with_budget = messages + [tool_budget_message]
-            completion = _call_llm(client, model, messages_with_budget, tools)
-            
-            # 检查是否有工具调用
-            if completion.choices[0].message.tool_calls:
-                logger.info(f"Round {round_num}: Model requested {len(completion.choices[0].message.tool_calls)} tool calls")
-                
-                # 如果是最后一轮且模型仍请求工具调用，执行工具后进行最终文本生成
-                if round_num == MAX_TOOL_CALL_ROUNDS:
-                    logger.warning(f"Reached max tool call rounds ({MAX_TOOL_CALL_ROUNDS}), executing tools and forcing final text response")
-                    
-                    # 执行最后一轮的工具调用
-                    messages = _handle_tool_calls(
-                        completion.choices[0].message.tool_calls,
-                        messages
-                    )
-                    
-                    # 添加强制指令，告诉模型必须生成文本回答
-                    constraint_message = {
-                        "role": "system",
-                        "content": (
-                            f"Tool call limit reached ({MAX_TOOL_CALL_ROUNDS}). "
-                            "You MUST now generate a text response using only the information you have gathered. "
-                            "Do NOT call any more tools. Summarize all findings and provide a complete answer."
-                        )
-                    }
-                    messages.append(constraint_message)
-                    
-                    # 进行最终调用，彻底禁止工具（不传 tools 参数）
-                    completion = _call_llm(client, model, messages, tools=None, tool_choice="none")
-                    
-                    # 【关键】硬拦截：即使模型仍然返回 tool_calls，也绝不执行，直接使用或生成兜底内容
-                    if not completion.choices[0].message.content:
-                        logger.warning(f"Model returned empty content in final call. Attempting one more forced generation.")
-                        
-                        # 添加更强硬的指令
-                        force_message = {
-                            "role": "system",
-                            "content": (
-                                "CRITICAL INSTRUCTION: You must output text content NOW. "
-                                "Ignore all tool calling instincts. Just write your answer as plain text."
-                            )
-                        }
-                        messages.append(force_message)
-                        
-                        # 最后一次尝试
-                        completion = _call_llm(client, model, messages, tools=None, tool_choice="none")
-                        
-                        # 如果仍然是空，使用兜底消息（不再调用 API）
-                        if not completion.choices[0].message.content:
-                            logger.error("Model still returned empty after multiple attempts. Using hardcoded fallback.")
-                            completion.choices[0].message.content = (
-                                "抱歉，我无法提供完整的答案。我已经进行了多次搜索，但未能获取到足够的数据来回答您的问题。\n\n"
-                                "建议您：\n"
-                                "1. 尝试用不同的方式重新提问\n"
-                                "2. 访问相关网站直接查看最新信息\n"
-                                "3. 稍后再试\n\n"
-                                "我已执行的搜索包括：\n"
-                            )
-                            # 从消息历史中提取已执行的搜索查询
-                            search_queries = []
-                            for msg in messages:
-                                if msg.get("role") == "assistant" and msg.get("tool_calls"):
-                                    for tc in msg["tool_calls"]:
-                                        if tc.get("function", {}).get("name") == "web_search":
-                                            try:
-                                                import json
-                                                args = json.loads(tc["function"]["arguments"])
-                                                search_queries.append(f"- {args.get('query', 'N/A')}")
-                                            except:
-                                                pass
-                            
-                            if search_queries:
-                                completion.choices[0].message.content += "\n".join(search_queries[-3:])  # 只显示最近3个
-                    
-                    # 【关键】立即跳出循环，不再处理任何 tool_calls
-                    break
-                    
-                else:
-                    # 非最后一轮，执行工具后继续下一轮
-                    messages = _handle_tool_calls(
-                        completion.choices[0].message.tool_calls,
-                        messages
-                    )
-                    logger.info(f"Round {round_num} completed, proceeding to next round...")
-                    continue
+
+            is_final_round = (
+                round_num == MAX_TOOL_CALL_ROUNDS
+            )
+
+            remaining_rounds = (
+                MAX_TOOL_CALL_ROUNDS - round_num
+            )
+
+            logger.info(
+                f"LLM API call round "
+                f"{round_num}/{MAX_TOOL_CALL_ROUNDS}"
+            )
+
+            # =========================
+            # 当前轮使用的 tools 配置
+            #
+            # 最后一轮：
+            # - 禁止工具调用
+            # - 即使模型继续返回 tool_calls
+            #   也绝不执行
+            # =========================
+            if is_final_round:
+                active_tools = None
+                tool_choice = "none"
+
+                # 给模型一个“软提示”
+                # 但真正的控制权在客户端
+                final_instruction = {
+                    "role": "system",
+                    "content": (
+                        "Tool call budget exhausted. "
+                        "You must now answer directly "
+                        "using only the information already gathered. "
+                        "Do not call tools anymore."
+                    ),
+                }
+
+                request_messages = messages + [final_instruction]
+
             else:
-                # 没有工具调用，直接返回结果
-                logger.info(f"Round {round_num}: No tool calls, got final response")
+                active_tools = tools
+                tool_choice = "auto"
+
+                # 告诉模型还剩多少轮
+                budget_instruction = {
+                    "role": "system",
+                    "content": (
+                        f"Tool Call Budget: "
+                        f"{remaining_rounds} tool call round(s) remaining "
+                        f"after this round."
+                    ),
+                }
+
+                request_messages = messages + [budget_instruction]
+
+            # =========================
+            # 调用 LLM
+            # =========================
+            completion = _call_llm(
+                client=client,
+                model=model,
+                messages=request_messages,
+                tools=active_tools,
+                tool_choice=tool_choice,
+            )
+
+            choice = completion.choices[0]
+            message = choice.message
+
+            content = (message.content or "").strip()
+            tool_calls = message.tool_calls or []
+            finish_reason = getattr(choice, "finish_reason", None)
+
+            logger.info(
+                "LLM Response: "
+                f"finish_reason={finish_reason}, "
+                f"tool_calls={len(tool_calls)}, "
+                f"content_len={len(content)}"
+            )
+
+            # ==================================================
+            # FINAL MODE
+            #
+            # 到达最大轮次后：
+            # - 完全忽略 tool_calls
+            # - 只接受 content
+            # - 不再进行任何 Tool Calling
+            #
+            # 这是整个 Agent 最重要的“硬拦截”
+            # ==================================================
+            if is_final_round:
+
+                if content:
+                    result = content
+                else:
+                    logger.warning(
+                        "Final round returned empty content. "
+                        "Using fallback response."
+                    )
+
+                    result = (
+                        "抱歉，我暂时无法生成完整回答。\n\n"
+                        "可能原因：\n"
+                        "1. 模型持续请求工具调用\n"
+                        "2. 模型未正确生成最终文本\n"
+                        "3. 当前模型对 Tool Calling 支持不稳定\n\n"
+                        "建议稍后重试或更换模型。"
+                    )
+
                 break
 
-        result = completion.choices[0].message.content
-        logger.info(f"LLM response received: user={user_id}, response_len={len(result)}")
+            # ==================================================
+            # NORMAL MODE
+            # ==================================================
 
+            # 模型请求工具调用
+            if tool_calls:
+
+                logger.info(
+                    f"Round {round_num}: "
+                    f"executing {len(tool_calls)} tool call(s)"
+                )
+
+                messages = _handle_tool_calls(
+                    tool_calls,
+                    messages,
+                )
+
+                continue
+
+            # 模型直接给出了文本回复
+            if content:
+
+                logger.info(
+                    f"Round {round_num}: "
+                    f"received final text response"
+                )
+
+                result = content
+                break
+
+            # 没有 tool_calls
+            # 也没有 content
+            logger.warning(
+                f"Round {round_num}: "
+                f"empty response from model"
+            )
+
+            result = "Empty response from model"
+            break
+
+        # =========================
+        # 最终兜底
+        # =========================
         if not result:
-            logger.warning("Empty response from API")
-            return "Empty response from API"
+            result = "LLM returned no result"
 
-        # 将对话记录保存到数据库
+        logger.info(
+            f"LLM response received: "
+            f"user={user_id}, "
+            f"response_len={len(result)}"
+        )
+
+        # =========================
+        # 写入数据库日志
+        # =========================
         try:
             log_llm(
                 user_id,
@@ -861,10 +945,17 @@ def ask_llm(
                 result,
             )
         except Exception:
-            logger.warning("failed to log llm response", exc_info=True)
+            logger.warning(
+                "failed to log llm response",
+                exc_info=True,
+            )
 
         return result
 
     except Exception as e:
-        logger.exception(f"llm request failed: user={user_id}, error={e}")
+        logger.exception(
+            f"llm request failed: "
+            f"user={user_id}, error={e}"
+        )
+
         return f"LLM Error: {str(e)}"
