@@ -574,6 +574,7 @@ def _handle_tool_calls(tool_calls: List, messages: List[Dict]) -> List[Dict]:
     })
     
     # 使用线程池并行执行所有工具调用
+    # tool执行结果
     tool_results = {}
     max_workers = min(len(tool_calls), 5)  # 最多5个并发线程
     
@@ -813,7 +814,8 @@ def ask_llm(
                 final_instruction = {
                     "role": "system",
                     "content": (
-                        "Tool call budget exhausted. You must now answer directly, using only the information already gathered, do not call tools anymore."
+                        "Tool call budget exhausted. You are NOT allowed to use tools. " + 
+                        "You must now answer directly, using only the information already gathered, do not call tools anymore."
                     ),
                 }
                 request_messages = messages + [final_instruction]
