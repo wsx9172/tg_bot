@@ -770,18 +770,34 @@ def ask_llm(
                     # 进行最后一次无工具调用，让模型基于所有工具结果生成最终回复
                     completion = _call_llm(client, model, messages, tools=None, tool_choice="none")
                     
-                    # 检查最后一次调用是否仍然返回工具调用（某些模型可能忽略 tool_choice="none"）
-                    if completion.choices[0].message.tool_calls:
-                        logger.warning(f"Model ignored tool_choice='none', still requested {len(completion.choices[0].message.tool_calls)} tool calls. Executing them and generating response without tools.")
+                    # 检查最后一次调用是否仍然返回工具调用或空内容（某些模型可能忽略 tool_choice="none"）
+                    if completion.choices[0].message.tool_calls or not completion.choices[0].message.content:
+                        logger.warning(f"Model ignored tool_choice='none' or returned empty content. Forcing final response generation.")
                         
-                        # 强制执行这些工具调用
-                        messages = _handle_tool_calls(
-                            completion.choices[0].message.tool_calls,
-                            messages
-                        )
+                        # 添加强制指令，明确要求模型必须生成文本回答
+                        force_response_message = {
+                            "role": "system",
+                            "content": (
+                                "CRITICAL: You MUST generate a text response now. "
+                                "Do NOT call any tools. Do NOT return empty content. "
+                                "Summarize all the information you have gathered and provide a complete answer to the user's question. "
+                            )
+                        }
+                        messages.append(force_response_message)
                         
-                        # 再次调用，这次不传 tools 参数，彻底禁止工具调用
+                        # 再次调用，彻底禁止工具
                         completion = _call_llm(client, model, messages, tools=None, tool_choice="none")
+                        
+                        # 如果仍然是空响应，使用兜底策略
+                        if not completion.choices[0].message.content:
+                            logger.error("Model still returned empty content after forced response. Using fallback message.")
+                            completion.choices[0].message.content = (
+                                "抱歉，我无法提供完整的答案。我已经尝试搜索相关信息，但未能获取到足够的数据。\n\n"
+                                "建议您：\n"
+                                "1. 尝试用不同的方式提问\n"
+                                "2. 访问相关网站直接查看最新信息\n"
+                                "3. 稍后再试"
+                            )
                     
                     break
                 else:
