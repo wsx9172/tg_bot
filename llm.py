@@ -9,9 +9,18 @@ from openai import OpenAI
 
 from db import get_recent_llm_messages, log_llm
 from system_tools import SYSTEM_TOOLS, SYSTEM_TOOL_SCHEMAS
-from config import SEARCH_BASE_URL
+
+from config import (
+    SEARCH_BASE_URL,
+    MEMORY_TURNS,
+    MAX_HISTORY_TEXT_LENGTH,
+    MAX_TOOL_CONTENT,
+    MAX_SNIPPET_LENGTH,
+    MAX_TOOL_CALL_ROUNDS,
+)
 
 logger = logging.getLogger(__name__)
+
 
 def log_openai_api_call(call_label="API Call"):
     """
@@ -90,12 +99,6 @@ def log_openai_api_call(call_label="API Call"):
         return wrapper
     return decorator
 
-
-MEMORY_TURNS = 5 # LLM 回复中包含的最近消息数量
-MAX_HISTORY_TEXT_LENGTH = 2000 # 单条消息最大字符数
-MAX_TOOL_CONTENT = 4000  # 工具返回内容最大字符数
-MAX_SNIPPET_LENGTH = 300  # 搜索结果摘要最大长度
-MAX_TOOL_CALL_ROUNDS = 5  # 工具调用最大轮次，防止无限循环
 
 SYSTEM_PROMPT = """
 You are skilled in Linux operations, Docker, networking, backend systems, ChatOps, and troubleshooting.

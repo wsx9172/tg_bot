@@ -172,3 +172,12 @@ ENABLED_TOOLS = {tool.strip().lower() for tool in os.getenv("ENABLED_TOOLS", "se
 
 # search engine 搜索引擎配置
 SEARCH_BASE_URL = os.getenv("SEARCH_BASE_URL").strip().rstrip("/")
+
+# =========================
+# LLM 对话历史与工具调用限制配置
+# =========================
+MEMORY_TURNS = int(os.getenv("MEMORY_TURNS", "5"))
+MAX_HISTORY_TEXT_LENGTH = int(os.getenv("MAX_HISTORY_TEXT_LENGTH", "2000"))
+MAX_TOOL_CONTENT = int(os.getenv("MAX_TOOL_CONTENT", "4000"))
+MAX_SNIPPET_LENGTH = int(os.getenv("MAX_SNIPPET_LENGTH", "300"))
+MAX_TOOL_CALL_ROUNDS = int(os.getenv("MAX_TOOL_CALL_ROUNDS", "10"))
