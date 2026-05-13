@@ -35,8 +35,8 @@ LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 # 日志文件配置
 LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "log")
 LOG_FILE = os.path.join(LOG_DIR, "bot.log")
-LOG_MAX_BYTES = 10 * 1024 * 1024  # 单个日志文件最大 10MB
-LOG_BACKUP_COUNT = 10  # 保留 5 个备份文件
+LOG_MAX_BYTES = 10 * 1024 * 1024  # 单个日志文件最大zize
+LOG_BACKUP_COUNT = 10  # 保留日志文件数量
 
 # 自动创建 log 目录
 if not os.path.exists(LOG_DIR):
@@ -164,6 +164,11 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "deepseek-v4-pro")
 
 # LLM 搜索功能配置
 ENABLE_SEARCH = os.getenv("ENABLE_SEARCH", "true").lower() in ("true", "1", "yes")
+
+# LLM 工具调用配置（使用集合管理，便于扩展）
+# 可选值: "search", "system"
+# 示例: ENABLED_TOOLS="search,system" 或 ENABLED_TOOLS="search" 或 ENABLED_TOOLS=""
+ENABLED_TOOLS = {tool.strip().lower() for tool in os.getenv("ENABLED_TOOLS", "search,system").split(",") if tool.strip()}
 
 # search engine 搜索引擎配置
 SEARCH_BASE_URL = os.getenv("SEARCH_BASE_URL").strip().rstrip("/")

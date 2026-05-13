@@ -160,6 +160,40 @@ SEARCH_TOOL_SCHEMA = {
     }
 }
 
+
+def _build_tools_list(enabled_tools: set) -> List[Dict]:
+    """
+    根据配置集合动态构建工具列表
+    
+    支持通过配置集合灵活控制哪些工具对 LLM 可用。这种设计便于未来扩展更多工具类型。
+    
+    Args:
+        enabled_tools: 启用的工具类型集合，如 {"search", "system"}
+    
+    Returns:
+        包含所有已启用工具的 schema 列表
+    
+    Examples:
+        >>> _build_tools_list({"search", "system"})  # 启用搜索和系统工具
+        >>> _build_tools_list({"search"})  # 仅启用搜索工具
+        >>> _build_tools_list(set())  # 禁用所有工具
+    """
+    tools = []
+    
+    # 如果启用系统工具，添加系统工具 schemas
+    if "system" in enabled_tools:
+        tools.extend(SYSTEM_TOOL_SCHEMAS)
+        logger.debug(f"Added {len(SYSTEM_TOOL_SCHEMAS)} system tool schemas")
+    
+    # 如果启用搜索功能，将搜索工具放在最前面（优先级更高）
+    if "search" in enabled_tools:
+        tools.insert(0, SEARCH_TOOL_SCHEMA)
+        logger.debug("Added search tool schema")
+    
+    logger.info(f"Built tools list with {len(tools)} tools (enabled: {enabled_tools})")
+    return tools
+
+
 def _config_value(config, *names, default=None):
     """
     从配置字典中按优先级获取配置值
@@ -503,9 +537,9 @@ def _execute_single_tool(tool_call) -> Dict:
             "tool_call_id": tool_call.id,
             "content": json.dumps({
                 "status": "failed",
-                "reason": f"Unknown function: {function_name}",
-                "results": []
-            }, ensure_ascii=False)
+                    "reason": f"Unknown function: {function_name}",
+                    "results": []
+                }, ensure_ascii=False)
         }
 
 
@@ -678,17 +712,17 @@ def ask_llm(
     logger.info(f"LLM request started: user={user_id}, provider={provider_id}, prompt_len={len(prompt)}")
     
     try:
-        # 从配置中提取 API 密钥、URL、模型和搜索功能开关
+        # 从配置中提取 API 密钥、URL、模型和启用的工具集合
         api_key = _config_value(config, "api_key", "OPENAI_API_KEY")
         api_url = _config_value(config, "api_url", "OPENAI_API_URL")
         model = _config_value(config, "model", "OPENAI_MODEL", default="deepseek-v4-pro")
-        enable_search = _config_value(config, "enable_search", "ENABLE_SEARCH", default="true").lower() in ("true", "1", "yes")
+        enabled_tools = _config_value(config, "enabled_tools", "ENABLED_TOOLS", default={"search", "system"})
 
         if not api_key:
             logger.error("LLM Error: missing api_key")
             return "LLM Error: missing api_key"
 
-        logger.debug(f"Calling LLM API: model={model}, base_url={_normalize_base_url(api_url)}, enable_search={enable_search}")
+        logger.debug(f"Calling LLM API: model={model}, base_url={_normalize_base_url(api_url)}, enabled_tools={enabled_tools}")
         
         # 初始化 OpenAI 客户端
         client = OpenAI(
@@ -699,8 +733,8 @@ def ask_llm(
         # 构建包含历史对话的初始消息列表
         messages = _build_messages(user_id, channel_id, bot_instance_id, prompt)
         
-        # 根据配置准备可用的工具列表
-        tools = [SEARCH_TOOL_SCHEMA] + SYSTEM_TOOL_SCHEMAS if enable_search else SYSTEM_TOOL_SCHEMAS
+        # 根据配置动态构建工具列表（支持扩展）
+        tools = _build_tools_list(enabled_tools)
         
         # 多轮工具调用循环
         for round_num in range(1, MAX_TOOL_CALL_ROUNDS + 1):

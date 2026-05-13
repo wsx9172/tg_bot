@@ -33,7 +33,7 @@ from config import (
     WEBHOOK_PORT,
     WEBHOOK_SECRET_TOKEN,
     WEBHOOK_URL_PATH,
-    ENABLE_SEARCH,
+    ENABLED_TOOLS,
 )
 
 from db import bot_instance_exists, mark_chat_first_seen
@@ -310,7 +310,7 @@ async def ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "api_key": OPENAI_API_KEY,
             "api_url": OPENAI_API_URL,
             "model": OPENAI_MODEL,
-            "enable_search": str(ENABLE_SEARCH),
+            "enabled_tools": ENABLED_TOOLS,  # 传递工具配置集合
         },
         prompt,
     )
