@@ -98,19 +98,17 @@ MAX_SNIPPET_LENGTH = 300  # 搜索结果摘要最大长度
 MAX_TOOL_CALL_ROUNDS = 5  # 工具调用最大轮次，防止无限循环
 
 SYSTEM_PROMPT = """
-You have strong expertise in Linux operations, ChatOps, Docker, networking, backend systems, and troubleshooting.
-You may also answer general questions when appropriate.
-You should:
-- Prefer technical and practical answers when questions are related to systems, programming, or infrastructure
-- Use tools when needed for real-time or system information
-- Respond to all general questions normally when they are unrelated to technical topics
-- Do NOT refuse non-technical questions unless they involve unsafe or disallowed content
+You are skilled in Linux operations, Docker, networking, backend systems, ChatOps, and troubleshooting.
+You can also answer general questions normally.
 
-Rules:
-- Reply in Chinese unless user requests otherwise
-- Never claim commands were executed
-- Base technical conclusions on tools or user input
-- Warn before dangerous operations
+Guidelines:
+
+* Prefer practical and technical answers for system/programming/infrastructure topics
+* Use tools when real-time or system information is needed
+* Reply in Chinese by default and present responses in a readable, user-friendly format rather than raw Markdown source
+* Never claim commands or operations were executed unless tool results confirm it
+* Base technical conclusions on tool output or user-provided information
+* Warn users before dangerous operations
 """.strip()
 
 
@@ -689,14 +687,6 @@ def ask_llm(
 ):
     """
     向 LLM 发起对话请求并获取回复。
-
-    支持：
-    - 多轮 Tool Calling
-    - 工具调用预算限制
-    - 最终强制文本回复
-    - Tool Calling 硬拦截
-    - 对话日志记录（带 session_id 关联）
-
     Args:
         user_id: 用户 ID
         channel_id: 频道 ID
@@ -705,18 +695,11 @@ def ask_llm(
         config: 配置字典
         prompt: 用户输入
         session_id: 会话 ID（用于关联同一对话的多轮调用，如未提供则自动生成）
-
-    设计原则：
-    - 不信任模型一定遵守 tool_choice
-    - 最终轮即使返回 tool_calls 也绝不执行
-    - 客户端状态机优先于 Prompt 约束
     """
-
     logger.info(
         f"LLM request started: "
         f"user={user_id}, provider={provider_id}, prompt_len={len(prompt)}"
     )
-
     try:
         # =========================
         # 生成或验证 session_id
@@ -818,19 +801,13 @@ def ask_llm(
                 final_instruction = {
                     "role": "system",
                     "content": (
-                        "Tool call budget exhausted. "
-                        "You must now answer directly "
-                        "using only the information already gathered. "
-                        "Do not call tools anymore."
+                        "Tool call budget exhausted. You must now answer directly, using only the information already gathered, do not call tools anymore."
                     ),
                 }
-
                 request_messages = messages + [final_instruction]
-
             else:
                 active_tools = tools
                 tool_choice = "auto"
-
                 # 告诉模型还剩多少轮
                 budget_instruction = {
                     "role": "system",
@@ -840,9 +817,7 @@ def ask_llm(
                         f"after this round."
                     ),
                 }
-
                 request_messages = messages + [budget_instruction]
-
             # =========================
             # 调用 LLM
             # =========================
@@ -882,7 +857,7 @@ def ask_llm(
                     log_response = f"{log_prefix} Executing tools..."
                 elif content:
                     # 最终文本响应（有内容）
-                    log_prompt = f"{log_prefix} Final response"
+                    log_prompt = f"{log_prefix}: {prompt}"
                     log_response = content
                 else:
                     # 空响应
@@ -915,7 +890,6 @@ def ask_llm(
             # 这是整个 Agent 最重要的“硬拦截”
             # ==================================================
             if is_final_round:
-
                 if content:
                     result = content
                 else:
@@ -923,7 +897,6 @@ def ask_llm(
                         "Final round returned empty content. "
                         "Using fallback response."
                     )
-
                     result = (
                         "抱歉，我暂时无法生成完整回答。\n\n"
                         "可能原因：\n"
@@ -932,7 +905,6 @@ def ask_llm(
                         "3. 当前模型对 Tool Calling 支持不稳定\n\n"
                         "建议稍后重试或更换模型。"
                     )
-
                 break
 
             # ==================================================
@@ -941,27 +913,21 @@ def ask_llm(
 
             # 模型请求工具调用
             if tool_calls:
-
                 logger.info(
                     f"Round {round_num}: "
                     f"executing {len(tool_calls)} tool call(s)"
                 )
-
                 messages = _handle_tool_calls(
                     tool_calls,
                     messages,
                 )
-
                 continue
-
             # 模型直接给出了文本回复
             if content:
-
                 logger.info(
                     f"Round {round_num}: "
                     f"received final text response"
                 )
-
                 result = content
                 break
 
@@ -971,10 +937,8 @@ def ask_llm(
                 f"Round {round_num}: "
                 f"empty response from model"
             )
-
             result = "Empty response from model"
             break
-
         # =========================
         # 最终兜底
         # =========================
@@ -989,13 +953,10 @@ def ask_llm(
 
         # 注意：每轮 LLM 调用已在循环内部记录到数据库
         # 此处不再重复记录最终响应，避免数据冗余
-
         return result
-
     except Exception as e:
         logger.exception(
             f"llm request failed: "
             f"user={user_id}, error={e}"
         )
-
         return f"LLM Error: {str(e)}"
