@@ -685,6 +685,7 @@ def ask_llm(
     provider_id,
     config,
     prompt,
+    session_id=None,
 ):
     """
     向 LLM 发起对话请求并获取回复。
@@ -694,7 +695,16 @@ def ask_llm(
     - 工具调用预算限制
     - 最终强制文本回复
     - Tool Calling 硬拦截
-    - 对话日志记录
+    - 对话日志记录（带 session_id 关联）
+
+    Args:
+        user_id: 用户 ID
+        channel_id: 频道 ID
+        bot_instance_id: Bot 实例 ID
+        provider_id: Provider ID
+        config: 配置字典
+        prompt: 用户输入
+        session_id: 会话 ID（用于关联同一对话的多轮调用，如未提供则自动生成）
 
     设计原则：
     - 不信任模型一定遵守 tool_choice
@@ -708,6 +718,15 @@ def ask_llm(
     )
 
     try:
+        # =========================
+        # 生成或验证 session_id
+        # =========================
+        if not session_id:
+            import uuid
+            session_id = str(uuid.uuid4())
+        
+        logger.debug(f"Session ID: {session_id}")
+
         # =========================
         # 读取配置
         # =========================
@@ -849,6 +868,42 @@ def ask_llm(
                 f"content_len={len(content)}"
             )
 
+            # =========================
+            # 记录每轮 LLM 调用日志（带 session_id）
+            # =========================
+            try:
+                # 构建日志标识，区分中间调用和最终响应
+                log_prefix = f"[Session:{session_id[:8]}...][Round {round_num}/{MAX_TOOL_CALL_ROUNDS}]"
+                
+                # 如果有工具调用，记录工具信息
+                if tool_calls:
+                    tool_names = [tc.function.name for tc in tool_calls]
+                    log_prompt = f"{log_prefix} Tool call requested: {', '.join(tool_names)}"
+                    log_response = f"{log_prefix} Executing tools..."
+                elif content:
+                    # 最终文本响应（有内容）
+                    log_prompt = f"{log_prefix} Final response"
+                    log_response = content
+                else:
+                    # 空响应
+                    log_prompt = f"{log_prefix} Empty response"
+                    log_response = f"{log_prefix} No content generated"
+                
+                log_llm(
+                    user_id,
+                    channel_id,
+                    bot_instance_id,
+                    provider_id,
+                    log_prompt,
+                    log_response,
+                    session_id=session_id,
+                )
+            except Exception:
+                logger.warning(
+                    f"failed to log llm round {round_num}",
+                    exc_info=True,
+                )
+
             # ==================================================
             # FINAL MODE
             #
@@ -932,23 +987,8 @@ def ask_llm(
             f"response_len={len(result)}"
         )
 
-        # =========================
-        # 写入数据库日志
-        # =========================
-        try:
-            log_llm(
-                user_id,
-                channel_id,
-                bot_instance_id,
-                provider_id,
-                prompt,
-                result,
-            )
-        except Exception:
-            logger.warning(
-                "failed to log llm response",
-                exc_info=True,
-            )
+        # 注意：每轮 LLM 调用已在循环内部记录到数据库
+        # 此处不再重复记录最终响应，避免数据冗余
 
         return result
 

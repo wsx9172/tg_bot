@@ -334,6 +334,7 @@ async def ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "enabled_tools": ENABLED_TOOLS,  # 传递工具配置集合
         },
         prompt,
+        session_id=None,  # 让 ask_llm 自动生成 session_id
     )
 
     logger.info(f"AI response generated for user={update.effective_user.username}, response length: {len(result)}")

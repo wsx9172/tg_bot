@@ -297,20 +297,20 @@ def log_alert(node_id, level, alert_type, message):
         conn.close()
 
 
-def log_llm(user_id, channel_id, bot_instance_id, provider_id, prompt, response):
+def log_llm(user_id, channel_id, bot_instance_id, provider_id, prompt, response, session_id=None):
     conn = get_conn()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO llm_log
-                (user_id, channel_id, bot_instance_id, provider_id, prompt, response, created_at)
-                VALUES (%s,%s,%s,%s,%s,%s,NOW(6))
+                (user_id, channel_id, bot_instance_id, provider_id, session_id, prompt, response, created_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,NOW(6))
                 """,
-                (user_id, channel_id, bot_instance_id, provider_id, prompt, response),
+                (user_id, channel_id, bot_instance_id, provider_id, session_id, prompt, response),
             )
         conn.commit()
-        sql_logger.info(f"LLM log saved: user={user_id}, prompt_len={len(prompt)}, response_len={len(response)}")
+        sql_logger.info(f"LLM log saved: user={user_id}, session={session_id[:8] if session_id else 'N/A'}..., prompt_len={len(prompt)}, response_len={len(response)}")
     except Exception as e:
         sql_logger.error(f"Failed to log LLM: {e}", exc_info=True)
         raise

@@ -168,12 +168,14 @@ CREATE TABLE `llm_log` (
   `channel_id` bigint DEFAULT NULL COMMENT 'channel.id',
   `bot_instance_id` bigint DEFAULT NULL COMMENT 'bot_instance.id',
   `provider_id` bigint DEFAULT NULL,
+  `session_id` varchar(64) DEFAULT NULL COMMENT '会话ID，用于关联同一对话的多轮调用',
   `prompt` text COLLATE utf8mb4_unicode_ci,
   `response` text COLLATE utf8mb4_unicode_ci,
   `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`id`),
   KEY `idx_llm_user_time` (`user_id`,`created_at`),
-  KEY `idx_llm_bot_time` (`bot_instance_id`,`created_at`)
+  KEY `idx_llm_bot_time` (`bot_instance_id`,`created_at`),
+  KEY `idx_llm_session` (`session_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='LLM 审计';
 
 SET FOREIGN_KEY_CHECKS = 1;
