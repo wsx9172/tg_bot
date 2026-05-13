@@ -768,7 +768,21 @@ def ask_llm(
                     messages.append(constraint_message)
                     
                     # 进行最后一次无工具调用，让模型基于所有工具结果生成最终回复
-                    completion = _call_llm(client, model, messages, tools=tools, tool_choice="none")
+                    completion = _call_llm(client, model, messages, tools=None, tool_choice="none")
+                    
+                    # 检查最后一次调用是否仍然返回工具调用（某些模型可能忽略 tool_choice="none"）
+                    if completion.choices[0].message.tool_calls:
+                        logger.warning(f"Model ignored tool_choice='none', still requested {len(completion.choices[0].message.tool_calls)} tool calls. Executing them and generating response without tools.")
+                        
+                        # 强制执行这些工具调用
+                        messages = _handle_tool_calls(
+                            completion.choices[0].message.tool_calls,
+                            messages
+                        )
+                        
+                        # 再次调用，这次不传 tools 参数，彻底禁止工具调用
+                        completion = _call_llm(client, model, messages, tools=None, tool_choice="none")
+                    
                     break
                 else:
                     # 非最后一轮，执行工具后继续下一轮
