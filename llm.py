@@ -8,16 +8,8 @@ import requests
 from openai import OpenAI
 
 from db import get_recent_llm_messages, log_llm
-from system_tools import SYSTEM_TOOLS, SYSTEM_TOOL_SCHEMAS
-
-from config import (
-    SEARCH_BASE_URL,
-    MEMORY_TURNS,
-    MAX_HISTORY_TEXT_LENGTH,
-    MAX_TOOL_CONTENT,
-    MAX_SNIPPET_LENGTH,
-    MAX_TOOL_CALL_ROUNDS,
-)
+from tools import SEARCH_TOOL_SCHEMA, web_search, SYSTEM_TOOLS, SYSTEM_TOOL_SCHEMAS
+from config import MEMORY_TURNS, MAX_HISTORY_TEXT_LENGTH, MAX_TOOL_CONTENT, MAX_TOOL_CALL_ROUNDS
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +101,7 @@ Guidelines:
 * Prefer practical and technical answers for system/programming/infrastructure topics
 * Use tools when real-time or system information is needed
 * Reply in Chinese by default
+* When sufficient information is obtained, you MUST stop calling tools and return final answer.
 
 Output Style Requirements:
 
@@ -145,33 +138,6 @@ def _get_current_time_message() -> str:
     )
     
     return time_message
-
-
-# 定义搜索工具的 schema
-SEARCH_TOOL_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "web_search",
-        "description": "在互联网上搜索实时信息、技术文档、最新资讯等。当用户询问需要最新信息的问题时使用此工具。",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "搜索关键词或问题，应该简洁明确"
-                },
-                "num_results": {
-                    "type": "integer",
-                    "description": "返回结果数量，默认3条，最多5条",
-                    "default": 3,
-                    "minimum": 1,
-                    "maximum": 5
-                }
-            },
-            "required": ["query"]
-        }
-    }
-}
 
 
 def _build_tools_list(enabled_tools: set) -> List[Dict]:
@@ -281,128 +247,6 @@ def _truncate_tool_content(content: str, max_length: int = MAX_TOOL_CONTENT) -> 
     return content_str[:half] + "\n...[content truncated due to length]...\n" + content_str[-half:]
 
 
-def _sanitize_snippet(snippet: str, max_length: int = MAX_SNIPPET_LENGTH) -> str:
-    """清洗和截断搜索结果摘要，防止 Prompt Injection"""
-    if not snippet:
-        return ""
-    
-    # 移除潜在的脚本标签和危险 HTML
-    snippet = snippet.replace("<script>", "").replace("</script>", "")
-    snippet = snippet.replace("<iframe>", "").replace("</iframe>", "")
-    
-    # 截断
-    if len(snippet) > max_length:
-        snippet = snippet[:max_length] + "..."
-    
-    return snippet.strip()
-
-
-def _web_search(query: str, num_results: int = 3) -> Dict:
-    """
-    
-    通过搜索引擎执行搜索，返回结构化的搜索结果。
-    
-    Args:
-        query: 搜索关键词
-        num_results: 返回结果数量（1-5）
-    
-    Returns:
-        搜索结果字典，包含状态、查询词、来源和结果列表
-    """
-    logger.info(f"Executing web search with search engine: query='{query}', num_results={num_results}")
-    
-    # 限制结果数量范围
-    num_results = max(1, min(5, num_results))
-    
-    try:
-        # 构建 search engine API 请求 URL
-        search_url = f"{SEARCH_BASE_URL}/search"
-        
-        # 准备请求参数
-        params = {
-            "q": query,
-            "format": "json",
-            "pageno": 1,
-            "categories": "general",
-            "language": "zh-CN"
-        }
-        
-        logger.debug(f"Sending request to search engine: url={search_url}, params={params}")
-        
-        # 发送 HTTP GET 请求，设置超时
-        response = requests.get(search_url, params=params, timeout=10)
-        response.raise_for_status()
-        
-        # 解析 JSON 响应
-        data = response.json()
-        
-        results_list = []
-        # 提取搜索结果
-        for result in data.get("results", [])[:num_results]:
-            title = result.get("title", "")
-            snippet = result.get("content", "") or result.get("snippet", "")
-            link = result.get("url", "")
-            
-            # 清洗和截断摘要
-            snippet = _sanitize_snippet(snippet)
-            
-            results_list.append({
-                "title": title[:200] if title else "",
-                "snippet": snippet,
-                "link": link
-            })
-        
-        results = {
-            "status": "success",
-            "query": query,
-            "results_count": len(results_list),
-            "results": results_list
-        }
-        
-        logger.info(f"search engine search completed: found {len(results['results'])} results")
-        return results
-        
-    except requests.exceptions.Timeout:
-        error_msg = "Request timeout"
-        logger.error(f"search engine search timeout: {error_msg}")
-        return {
-            "status": "failed",
-            "reason": f"Search timeout after 10 seconds",
-            "query": query,
-            "results": []
-        }
-        
-    except requests.exceptions.ConnectionError as e:
-        error_msg = str(e)
-        logger.error(f"search engine connection error: {error_msg}", exc_info=True)
-        return {
-            "status": "failed",
-            "reason": f"Connection error: Cannot reach search engine server at {SEARCH_BASE_URL}",
-            "query": query,
-            "results": []
-        }
-        
-    except requests.exceptions.HTTPError as e:
-        error_msg = str(e)
-        logger.error(f"search engine HTTP error: {error_msg}", exc_info=True)
-        return {
-            "status": "failed",
-            "reason": f"HTTP error: {response.status_code} - {error_msg}",
-            "query": query,
-            "results": []
-        }
-        
-    except Exception as e:
-        error_msg = str(e)
-        logger.error(f"search engine search failed: {error_msg}", exc_info=True)
-        return {
-            "status": "failed",
-            "reason": f"Search failed: {error_msg}",
-            "query": query,
-            "results": []
-        }
-
-
 def _tool_call_to_dict(tool_call) -> Dict:
     """
     将 tool_call 对象转换为字典，确保跨 SDK 兼容性
@@ -456,8 +300,8 @@ def _execute_single_tool(tool_call) -> Dict:
                     }, ensure_ascii=False)
                 }
             
-            # 执行搜索
-            search_result = _web_search(query, num_results)
+            # 执行搜索 (使用从 tools 模块导入的 web_search)
+            search_result = web_search(query, num_results)
             
             # 截断过长的搜索结果，防止超出 context
             result_json = json.dumps(search_result, ensure_ascii=False, indent=2)
@@ -619,7 +463,7 @@ def _handle_tool_calls(tool_calls: List, messages: List[Dict]) -> List[Dict]:
 
 
 @log_openai_api_call()
-def _call_llm(client, model, messages, tools, tool_choice="auto"):
+def _call_llm(client, model, messages, tools=None, tool_choice=None):
     """
     调用 LLM API
     
@@ -633,13 +477,18 @@ def _call_llm(client, model, messages, tools, tool_choice="auto"):
     Returns:
         API 响应对象
     """
-    return client.chat.completions.create(
-        model=model,
-        messages=messages,
-        tools=tools,
-        tool_choice=tool_choice,
-        timeout=30,
-    )
+    kwargs = {
+            "model": model,
+            "messages": messages,
+            "timeout": 30,
+        }
+        # 只有当 tools 不为 None 时，才把这个 key 加入字典
+    if tools is not None:
+        kwargs["tools"] = tools
+        if tool_choice:
+            kwargs["tool_choice"] = tool_choice
+            
+    return client.chat.completions.create(**kwargs)
 
 
 def _build_messages(user_id, channel_id, bot_instance_id, prompt):
