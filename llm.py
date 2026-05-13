@@ -738,68 +738,98 @@ def ask_llm(
         
         # 多轮工具调用循环
         for round_num in range(1, MAX_TOOL_CALL_ROUNDS + 1):
-            logger.info(f"LLM API call round {round_num}/{MAX_TOOL_CALL_ROUNDS}")
+            remaining_rounds = MAX_TOOL_CALL_ROUNDS - round_num
             
-            # 调用 LLM API
-            completion = _call_llm(client, model, messages, tools)
+            # 在每次调用前添加剩余轮次提示，帮助模型更好地规划工具使用
+            tool_budget_message = {
+                "role": "system",
+                "content": (
+                    f"Tool Call Budget: You have {remaining_rounds} more tool call round(s) remaining after this one. "
+                    f"Current round: {round_num}/{MAX_TOOL_CALL_ROUNDS}. "
+                )
+            }
+            
+            logger.info(f"LLM API call round {round_num}/{MAX_TOOL_CALL_ROUNDS} (remaining: {remaining_rounds})")
+            
+            # 调用 LLM API（将预算提示添加到消息列表末尾）
+            messages_with_budget = messages + [tool_budget_message]
+            completion = _call_llm(client, model, messages_with_budget, tools)
             
             # 检查是否有工具调用
             if completion.choices[0].message.tool_calls:
                 logger.info(f"Round {round_num}: Model requested {len(completion.choices[0].message.tool_calls)} tool calls")
                 
-                # 如果是最后一轮且模型仍请求工具调用，执行工具后需要进行最终调用
+                # 如果是最后一轮且模型仍请求工具调用，执行工具后进行最终文本生成
                 if round_num == MAX_TOOL_CALL_ROUNDS:
-                    logger.warning(f"Reached max tool call rounds ({MAX_TOOL_CALL_ROUNDS}), executing tools and performing final call")
+                    logger.warning(f"Reached max tool call rounds ({MAX_TOOL_CALL_ROUNDS}), executing tools and forcing final text response")
                     
-                    # 执行工具调用
+                    # 执行最后一轮的工具调用
                     messages = _handle_tool_calls(
                         completion.choices[0].message.tool_calls,
                         messages
                     )
                     
-                    # 添加强制指令，告诉模型已达到工具调用限制
+                    # 添加强制指令，告诉模型必须生成文本回答
                     constraint_message = {
                         "role": "system",
                         "content": (
                             f"Tool call limit reached ({MAX_TOOL_CALL_ROUNDS}). "
-                            "Stop calling tools and answer using only existing information."
+                            "You MUST now generate a text response using only the information you have gathered. "
+                            "Do NOT call any more tools. Summarize all findings and provide a complete answer."
                         )
                     }
                     messages.append(constraint_message)
                     
-                    # 进行最后一次无工具调用，让模型基于所有工具结果生成最终回复
+                    # 进行最终调用，彻底禁止工具（不传 tools 参数）
                     completion = _call_llm(client, model, messages, tools=None, tool_choice="none")
                     
-                    # 检查最后一次调用是否仍然返回工具调用或空内容（某些模型可能忽略 tool_choice="none"）
-                    if completion.choices[0].message.tool_calls or not completion.choices[0].message.content:
-                        logger.warning(f"Model ignored tool_choice='none' or returned empty content. Forcing final response generation.")
+                    # 【关键】硬拦截：即使模型仍然返回 tool_calls，也绝不执行，直接使用或生成兜底内容
+                    if not completion.choices[0].message.content:
+                        logger.warning(f"Model returned empty content in final call. Attempting one more forced generation.")
                         
-                        # 添加强制指令，明确要求模型必须生成文本回答
-                        force_response_message = {
+                        # 添加更强硬的指令
+                        force_message = {
                             "role": "system",
                             "content": (
-                                "CRITICAL: You MUST generate a text response now. "
-                                "Do NOT call any tools. Do NOT return empty content. "
-                                "Summarize all the information you have gathered and provide a complete answer to the user's question. "
+                                "CRITICAL INSTRUCTION: You must output text content NOW. "
+                                "Ignore all tool calling instincts. Just write your answer as plain text."
                             )
                         }
-                        messages.append(force_response_message)
+                        messages.append(force_message)
                         
-                        # 再次调用，彻底禁止工具
+                        # 最后一次尝试
                         completion = _call_llm(client, model, messages, tools=None, tool_choice="none")
                         
-                        # 如果仍然是空响应，使用兜底策略
+                        # 如果仍然是空，使用兜底消息（不再调用 API）
                         if not completion.choices[0].message.content:
-                            logger.error("Model still returned empty content after forced response. Using fallback message.")
+                            logger.error("Model still returned empty after multiple attempts. Using hardcoded fallback.")
                             completion.choices[0].message.content = (
-                                "抱歉，我无法提供完整的答案。我已经尝试搜索相关信息，但未能获取到足够的数据。\n\n"
+                                "抱歉，我无法提供完整的答案。我已经进行了多次搜索，但未能获取到足够的数据来回答您的问题。\n\n"
                                 "建议您：\n"
-                                "1. 尝试用不同的方式提问\n"
+                                "1. 尝试用不同的方式重新提问\n"
                                 "2. 访问相关网站直接查看最新信息\n"
-                                "3. 稍后再试"
+                                "3. 稍后再试\n\n"
+                                "我已执行的搜索包括：\n"
                             )
+                            # 从消息历史中提取已执行的搜索查询
+                            search_queries = []
+                            for msg in messages:
+                                if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                                    for tc in msg["tool_calls"]:
+                                        if tc.get("function", {}).get("name") == "web_search":
+                                            try:
+                                                import json
+                                                args = json.loads(tc["function"]["arguments"])
+                                                search_queries.append(f"- {args.get('query', 'N/A')}")
+                                            except:
+                                                pass
+                            
+                            if search_queries:
+                                completion.choices[0].message.content += "\n".join(search_queries[-3:])  # 只显示最近3个
                     
+                    # 【关键】立即跳出循环，不再处理任何 tool_calls
                     break
+                    
                 else:
                     # 非最后一轮，执行工具后继续下一轮
                     messages = _handle_tool_calls(
