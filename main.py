@@ -14,7 +14,9 @@ from telegram.ext import (
     Application,
     CommandHandler,
     CallbackQueryHandler,
-    ContextTypes
+    ContextTypes,
+    MessageHandler,
+    filters
 )
 
 from config import (
@@ -120,6 +122,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         str(update.effective_user.id),
     )
 
+    await show_main_menu(update.message)
+
+
+# =========================
+# 处理未知命令/消息（Fallback）
+# =========================
+
+async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """当用户输入不符合预期格式时，显示主菜单用法"""
+    if not auth(update):
+        logger.warning(f"Unauthorized message from user_id={update.effective_user.id if update.effective_user else 'unknown'}")
+        return
+    
+    # 获取用户输入
+    user_input = update.message.text if update.message else ""
+    
+    logger.info(f"Fallback triggered for user={update.effective_user.username}, input: {user_input[:100]}")
+    
+    # 复用已有的 show_main_menu 函数
     await show_main_menu(update.message)
 
 
@@ -458,6 +479,12 @@ def main():
         app.add_handler(CommandHandler("status", status))
         app.add_handler(CommandHandler("ai", ai))
         app.add_handler(CommandHandler("msg", msg))
+
+        # Fallback 1：处理所有非命令的文本消息
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown_command))
+        
+        # Fallback 2：处理所有未知命令（以 / 开头但未注册的命令）
+        app.add_handler(MessageHandler(filters.Regex(r'^/'), unknown_command))
 
         app.add_handler(CallbackQueryHandler(button_handler))
 
