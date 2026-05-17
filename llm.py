@@ -9,7 +9,7 @@ from openai import OpenAI
 
 from db import get_recent_llm_messages, log_llm
 from tools import SEARCH_TOOL_SCHEMA, web_search, SYSTEM_TOOLS, SYSTEM_TOOL_SCHEMAS
-from config import MEMORY_TURNS, MAX_HISTORY_TEXT_LENGTH, MAX_TOOL_CONTENT, MAX_TOOL_CALL_ROUNDS
+from config import MEMORY_TURNS, MAX_HISTORY_TEXT_LENGTH, MAX_TOOL_CONTENT, MAX_TOOL_CALL_ROUNDS, LLM_REQUEST_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
@@ -480,7 +480,7 @@ def _call_llm(client, model, messages, tools=None, tool_choice=None):
     kwargs = {
             "model": model,
             "messages": messages,
-            "timeout": 30,
+            "timeout": LLM_REQUEST_TIMEOUT,
         }
         # 只有当 tools 不为 None 时，才把这个 key 加入字典
     if tools is not None:
