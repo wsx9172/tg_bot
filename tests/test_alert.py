@@ -71,7 +71,7 @@ async def send_test_alert(custom_message=None):
 if __name__ == "__main__":
     custom_msg = None
     if len(sys.argv) > 1:
-        custom_msg = sys.argv[1]
+        custom_msg = " ".join(sys.argv[1:])
         print(f"📌 使用自定义参数: {custom_msg}\n")
     
     asyncio.run(send_test_alert(custom_msg))
