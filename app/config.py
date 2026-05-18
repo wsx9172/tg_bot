@@ -184,3 +184,6 @@ MAX_TOOL_CALL_ROUNDS = int(os.getenv("MAX_TOOL_CALL_ROUNDS", "5"))
 
 # 消息保存目录
 MSG_DIR = os.getenv("MSG_DIR", os.path.join(_ROOT, "messages"))
+
+# LLM API 请求超时配置（秒）
+LLM_REQUEST_TIMEOUT = int(os.getenv("LLM_REQUEST_TIMEOUT", "120"))

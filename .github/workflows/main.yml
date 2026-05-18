@@ -24,18 +24,3 @@ jobs:
             git reset --hard origin/main
             sudo pip install -r requirements.txt
             sudo systemctl restart bot
-
-      - name: Deploy to Oracle server
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_IP_O }}
-          username: ${{ secrets.SERVER_USER_O }}
-          key: ${{ secrets.SERVER_SSH_KEY_O }}
-          port: ${{ secrets.SERVER_PORT_O }}
-          script: |
-            set -e
-            cd /opt/tg_bot
-            git fetch origin
-            git reset --hard origin/main
-            sudo pip install -r requirements.txt
-            sudo systemctl restart bot
