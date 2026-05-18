@@ -1,9 +1,14 @@
+# -*- coding: utf-8 -*-
 """
 测试日志配置脚本
 运行此脚本验证日志文件是否正确创建和写入
 """
-import sys
 import os
+from pathlib import Path
+
+# 将项目根目录加入 Python 路径，支持从任意目录运行
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # 导入配置（会自动创建 log 目录）
 from app.config import LOG_DIR, LOG_FILE, LOG_LEVEL, LOG_SQL

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 强制发送测试告警（无需系统真的触发告警）
 支持自定义参数：python3 test_alert.py "自定义告警内容"
@@ -6,6 +7,11 @@
 import asyncio
 import logging
 import sys
+from pathlib import Path
+
+# 将项目根目录加入 Python 路径，支持从任意目录运行
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from telegram.ext import Application
 from app.config import BOT_TOKEN, ALLOWED_USERS
 
