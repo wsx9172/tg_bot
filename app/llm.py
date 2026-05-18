@@ -353,6 +353,34 @@ def _execute_single_tool(tool_call) -> Dict:
             elif function_name == "get_docker_containers":
                 limit = args.get("limit", 10)
                 tool_result = SYSTEM_TOOLS[function_name](limit=limit)
+            elif function_name == "get_docker_container_details":
+                container_id_or_name = args.get("container_id_or_name")
+                tool_result = SYSTEM_TOOLS[function_name](container_id_or_name=container_id_or_name)
+            elif function_name == "get_network_connections":
+                state = args.get("state", "all")
+                tool_result = SYSTEM_TOOLS[function_name](state=state)
+            elif function_name == "get_systemd_service_status":
+                service_name = args.get("service_name", "")
+                state = args.get("state", "")
+                tool_result = SYSTEM_TOOLS[function_name](service_name=service_name, state=state)
+            elif function_name == "get_directory_size":
+                path = args.get("path")
+                max_depth = args.get("max_depth", 2)
+                tool_result = SYSTEM_TOOLS[function_name](path=path, max_depth=max_depth)
+            elif function_name == "get_large_files":
+                path = args.get("path")
+                limit = args.get("limit", 20)
+                tool_result = SYSTEM_TOOLS[function_name](path=path, limit=limit)
+            elif function_name == "read_log_tail":
+                file_path = args.get("file_path")
+                lines = args.get("lines", 50)
+                grep_pattern = args.get("grep_pattern", "")
+                tool_result = SYSTEM_TOOLS[function_name](file_path=file_path, lines=lines, grep_pattern=grep_pattern)
+            elif function_name == "get_journalctl_logs":
+                unit = args.get("unit")
+                lines = args.get("lines", 50)
+                since = args.get("since", "")
+                tool_result = SYSTEM_TOOLS[function_name](unit=unit, lines=lines, since=since)
             else:
                 # 无参数函数
                 tool_result = SYSTEM_TOOLS[function_name]()
