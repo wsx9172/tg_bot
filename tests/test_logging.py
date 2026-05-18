@@ -5,11 +5,8 @@
 import sys
 import os
 
-# 添加项目根目录到路径
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 # 导入配置（会自动创建 log 目录）
-from config import LOG_DIR, LOG_FILE, LOG_LEVEL, LOG_SQL
+from app.config import LOG_DIR, LOG_FILE, LOG_LEVEL, LOG_SQL
 
 print("=" * 60)
 print("日志配置测试")

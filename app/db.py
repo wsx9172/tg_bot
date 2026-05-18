@@ -4,7 +4,7 @@ import logging
 
 import pymysql
 from dbutils.pooled_db import PooledDB
-from config import MYSQL_CONFIG, LOG_SQL
+from app.config import MYSQL_CONFIG, LOG_SQL
 
 _pool = None
 _pool_lock = threading.Lock()

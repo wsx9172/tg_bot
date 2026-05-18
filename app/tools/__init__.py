@@ -10,10 +10,10 @@ LLM 工具模块包
 """
 
 # ==================== 搜索工具 ====================
-from tools.search_tools import SEARCH_TOOL_SCHEMA, web_search
+from app.tools.search_tools import SEARCH_TOOL_SCHEMA, web_search
 
 # ==================== 系统工具集合（推荐使用）====================
-from tools.system_tools import (
+from app.tools.system_tools import (
     SYSTEM_TOOLS,           # 工具注册表字典 {name: function}
     SYSTEM_TOOL_SCHEMAS,    # 工具 Schema 列表（用于构建 tools 参数）
 )
@@ -21,7 +21,7 @@ from tools.system_tools import (
 # ==================== 独立诊断函数（可选，高级用法）====================
 # 注意：通常不需要直接导入这些函数，通过 SYSTEM_TOOLS 调用即可
 # 仅在需要单独测试或直接调用时才使用
-from tools.system_tools import (
+from app.tools.system_tools import (
     get_system_health_summary,   # 系统健康快速诊断
     get_io_stats,                # I/O 性能诊断
     get_load_average,            # 系统负载分析

@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from app.config import BOT_TOKEN, _ROOT, LOG_DIR, MSG_DIR; print\\('config OK'\\); print\\(f'  _ROOT={_ROOT}'\\); print\\(f'  LOG_DIR={LOG_DIR}'\\); print\\(f'  MSG_DIR={MSG_DIR}'\\)\")"
+    ]
+  }
+}

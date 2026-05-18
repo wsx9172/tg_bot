@@ -2,12 +2,12 @@ import shlex
 import subprocess
 import logging
 
-from db import (
+from app.db import (
     bot_instance_exists,
     log_command,
     user_can_access_node,
 )
-from router import get_command_script
+from app.router import get_command_script
 
 logger = logging.getLogger(__name__)
 

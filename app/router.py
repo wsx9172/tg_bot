@@ -1,5 +1,5 @@
 import logging
-from db import get_conn
+from app.db import get_conn
 
 logger = logging.getLogger(__name__)
 

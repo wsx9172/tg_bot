@@ -7,7 +7,7 @@ import asyncio
 import logging
 import sys
 from telegram.ext import Application
-from config import BOT_TOKEN, ALLOWED_USERS
+from app.config import BOT_TOKEN, ALLOWED_USERS
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

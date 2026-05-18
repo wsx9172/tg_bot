@@ -174,15 +174,20 @@ LOG_SQL=true
 
 ```
 bot/
-├── log/                  # 日志目录（自动创建）
-│   ├── bot.log          # 主日志文件
-│   ├── bot.log.1        # 备份文件 1
-│   ├── bot.log.2        # 备份文件 2
+├── app/                   # 应用主包
+│   ├── config.py
+│   ├── main.py
+│   └── ...
+├── tests/                 # 测试文件
+├── log/                   # 日志目录（自动创建）
+│   ├── bot.log           # 主日志文件
+│   ├── bot.log.1         # 备份文件 1
+│   ├── bot.log.2         # 备份文件 2
 │   ├── ...
-│   ├── sql.log          # SQL 日志文件（可选）
-│   └── sql.log.1        # SQL 备份文件
-├── config.py
-├── main.py
+│   ├── sql.log           # SQL 日志文件（可选）
+│   └── sql.log.1         # SQL 备份文件
+├── setup_bot.py
+├── init.sql
 └── ...
 ```
 
@@ -253,7 +258,7 @@ python setup_bot.py --reset-db --skip-webhook
 ## 启动
 
 ```bash
-python main.py
+python -m app.main
 ```
 
 如果 `BOT_MODE=polling`，程序会直接启动 polling。

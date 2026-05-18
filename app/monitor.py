@@ -1,7 +1,7 @@
 import psutil
 import logging
-from config import CPU_ALERT, MEM_ALERT, DISK_ALERT, NODE_ID
-from db import log_status, log_alert
+from app.config import CPU_ALERT, MEM_ALERT, DISK_ALERT, NODE_ID
+from app.db import log_status, log_alert
 
 logger = logging.getLogger(__name__)
 

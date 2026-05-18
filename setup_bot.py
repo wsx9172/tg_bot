@@ -8,7 +8,7 @@ import pymysql
 import requests
 from pymysql.constants import CLIENT
 
-from config import (
+from app.config import (
     BOT_MODE,
     BOT_TOKEN,
     MYSQL_CONFIG,

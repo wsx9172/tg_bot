@@ -8,7 +8,7 @@ import logging
 from typing import Dict
 import requests
 
-from config import SEARCH_BASE_URL, MAX_SNIPPET_LENGTH
+from app.config import SEARCH_BASE_URL, MAX_SNIPPET_LENGTH
 
 logger = logging.getLogger(__name__)
 

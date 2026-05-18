@@ -7,9 +7,9 @@ from datetime import datetime
 import requests
 from openai import OpenAI
 
-from db import get_recent_llm_messages, log_llm
-from tools import SEARCH_TOOL_SCHEMA, web_search, SYSTEM_TOOLS, SYSTEM_TOOL_SCHEMAS
-from config import MEMORY_TURNS, MAX_HISTORY_TEXT_LENGTH, MAX_TOOL_CONTENT, MAX_TOOL_CALL_ROUNDS
+from app.db import get_recent_llm_messages, log_llm
+from app.tools import SEARCH_TOOL_SCHEMA, web_search, SYSTEM_TOOLS, SYSTEM_TOOL_SCHEMAS
+from app.config import MEMORY_TURNS, MAX_HISTORY_TEXT_LENGTH, MAX_TOOL_CONTENT, MAX_TOOL_CALL_ROUNDS
 
 logger = logging.getLogger(__name__)
 

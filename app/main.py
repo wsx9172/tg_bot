@@ -19,7 +19,7 @@ from telegram.ext import (
     filters
 )
 
-from config import (
+from app.config import (
     BOT_MODE,
     BOT_TOKEN,
     ALLOWED_USERS,
@@ -36,15 +36,16 @@ from config import (
     WEBHOOK_SECRET_TOKEN,
     WEBHOOK_URL_PATH,
     ENABLED_TOOLS,
+    MSG_DIR,
 )
 
-from db import bot_instance_exists, mark_chat_first_seen
-from monitor import get_system_status, check_alerts
-from executor import run_command
-from llm import ask_llm
+from app.db import bot_instance_exists, mark_chat_first_seen
+from app.monitor import get_system_status, check_alerts
+from app.executor import run_command
+from app.llm import ask_llm
 
-from menu import main_menu, status_menu, cmd_menu, ai_menu, msg_menu
-from identity import get_or_create_user, get_or_create_channel
+from app.menu import main_menu, status_menu, cmd_menu, ai_menu, msg_menu
+from app.identity import get_or_create_user, get_or_create_channel
 
 from concurrent.futures import ThreadPoolExecutor
 
@@ -54,9 +55,6 @@ logger = logging.getLogger(__name__)
 
 MAX_MESSAGE_LENGTH = 4096
 MAIN_MENU_TEXT = "🤖 Linux 运维控制台\n请选择功能："
-
-# 接收消息目录
-MSG_DIR = "/opt/tg_bot/messages"
 
 # 确保消息目录存在
 os.makedirs(MSG_DIR, exist_ok=True)

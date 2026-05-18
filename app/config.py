@@ -4,8 +4,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# 始终从「本文件所在目录」加载 .env，避免在 Win10 下 cwd 不是项目根时读不到
-_ROOT = Path(__file__).resolve().parent
+# 从项目根目录加载 .env
+_ROOT = Path(__file__).resolve().parent.parent
 _ENV_FILE = _ROOT / ".env"
 if not _ENV_FILE.is_file():
     print(
@@ -33,7 +33,7 @@ LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 # 日志文件配置
-LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "log")
+LOG_DIR = os.path.join(_ROOT, "log")
 LOG_FILE = os.path.join(LOG_DIR, "bot.log")
 LOG_MAX_BYTES = 10 * 1024 * 1024  # 单个日志文件最大zize
 LOG_BACKUP_COUNT = 10  # 保留日志文件数量
@@ -171,7 +171,7 @@ ENABLE_SEARCH = os.getenv("ENABLE_SEARCH", "true").lower() in ("true", "1", "yes
 ENABLED_TOOLS = {tool.strip().lower() for tool in os.getenv("ENABLED_TOOLS", "search,system").split(",") if tool.strip()}
 
 # search engine 搜索引擎配置
-SEARCH_BASE_URL = os.getenv("SEARCH_BASE_URL").strip().rstrip("/")
+SEARCH_BASE_URL = (os.getenv("SEARCH_BASE_URL") or "").strip().rstrip("/")
 
 # =========================
 # LLM 对话历史与工具调用限制配置
@@ -181,3 +181,6 @@ MAX_HISTORY_TEXT_LENGTH = int(os.getenv("MAX_HISTORY_TEXT_LENGTH", "2000"))
 MAX_TOOL_CONTENT = int(os.getenv("MAX_TOOL_CONTENT", "4000"))
 MAX_SNIPPET_LENGTH = int(os.getenv("MAX_SNIPPET_LENGTH", "300"))
 MAX_TOOL_CALL_ROUNDS = int(os.getenv("MAX_TOOL_CALL_ROUNDS", "5"))
+
+# 消息保存目录
+MSG_DIR = os.getenv("MSG_DIR", os.path.join(_ROOT, "messages"))
