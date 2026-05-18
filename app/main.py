@@ -3,6 +3,11 @@ import contextlib
 import logging
 import sys
 import os
+from pathlib import Path
+
+# 将项目根目录加入 Python 路径，支持直接执行 app/main.py
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import pymysql
 import uuid
 
